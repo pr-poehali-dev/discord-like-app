@@ -5,7 +5,7 @@ import UserSettings from "@/components/UserSettings";
 import CreateServerModal from "@/components/CreateServerModal";
 import ChannelSettings from "@/components/ChannelSettings";
 import StreamCapture from "@/components/StreamCapture";
-import DMPanel from "@/components/DMPanel";
+import DMView from "@/components/DMView";
 import ProfileModal from "@/components/ProfileModal";
 
 interface User {
@@ -262,7 +262,7 @@ export default function Index({ user, onLogout }: IndexProps) {
   const [showCreateServer, setShowCreateServer] = useState(false);
   const [showChannelSettings, setShowChannelSettings] = useState(false);
   const [showStreamCapture, setShowStreamCapture] = useState(false);
-  const [showDMPanel, setShowDMPanel] = useState(false);
+  const [dmMode, setDmMode] = useState(false);
   const [profileMember, setProfileMember] = useState<ServerMember | null>(null);
   const [servers, setServers] = useState(INITIAL_SERVERS);
 
@@ -311,7 +311,6 @@ export default function Index({ user, onLogout }: IndexProps) {
       {showCreateServer && <CreateServerModal onClose={() => setShowCreateServer(false)} onCreate={s => { const newId = servers.length + 1; setServers(prev => [...prev, { id: newId, ...s, members: 1, unread: 0 }]); setActiveServer(newId); }} />}
       {showChannelSettings && <ChannelSettings channel={sData.channels.text.find(c => c.id === activeChannel) || sData.channels.text[0]} onClose={() => setShowChannelSettings(false)} />}
       {showStreamCapture && <StreamCapture onClose={() => setShowStreamCapture(false)} onStart={() => setStreamActive(true)} />}
-      {showDMPanel && <DMPanel user={user} onClose={() => setShowDMPanel(false)} />}
       {profileMember && (
         <ProfileModal
           member={{ id: profileMember.id, name: profileMember.name, color: profileMember.color, role: profileMember.role, roleColor: profileMember.roleColor, status: profileMember.status, avatar: profileMember.avatar, game: profileMember.game, mutual: 3 }}
@@ -325,13 +324,13 @@ export default function Index({ user, onLogout }: IndexProps) {
         <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-2 cursor-pointer" style={{ background: "linear-gradient(135deg, #00ff88, #00aaff)" }}>
           <span style={{ fontFamily: "Orbitron, sans-serif", fontSize: "11px", fontWeight: 900, color: "#060a11" }}>NX</span>
         </div>
-        {/* DM button */}
-        <div onClick={() => setShowDMPanel(true)} title="Личные сообщения и друзья"
-          className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer hover:opacity-90 transition-all hover:scale-105 group relative"
-          style={{ background: "#0d1424", border: "1px solid rgba(0,170,255,0.3)" }}>
+        {/* DM mode button */}
+        <div onClick={() => setDmMode(v => !v)} title={dmMode ? "Вернуться к серверам" : "Личные сообщения"}
+          className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer transition-all hover:scale-105 group relative"
+          style={{ background: dmMode ? "rgba(0,170,255,0.2)" : "#0d1424", border: dmMode ? "1px solid #00aaff" : "1px solid rgba(0,170,255,0.3)", boxShadow: dmMode ? "0 0 12px rgba(0,170,255,0.4)" : "none" }}>
           <Icon name="MessageCircle" size={16} style={{ color: "#00aaff" }} />
           <div className="absolute left-12 rounded-lg px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 whitespace-nowrap" style={{ background: "#111a2e", color: "#e2e8f0", border: "1px solid rgba(0,170,255,0.2)", fontSize: "12px", fontFamily: "Rajdhani, sans-serif", fontWeight: 600 }}>
-            Личные сообщения
+            {dmMode ? "← Серверы" : "Личные сообщения"}
           </div>
         </div>
         <div className="w-6 h-px mb-1" style={{ background: "rgba(0,255,136,0.2)" }} />
@@ -369,8 +368,26 @@ export default function Index({ user, onLogout }: IndexProps) {
         </div>
       </div>
 
+      {/* DM MODE */}
+      {dmMode && (
+        <DMView
+          user={user}
+          onLogout={onLogout}
+          onOpenSettings={() => setShowUserSettings(true)}
+          micMuted={micMuted}
+          headphonesDeaf={headphonesDeaf}
+          onToggleMic={() => setMicMuted(v => !v)}
+          onToggleDeaf={() => setHeadphonesDeaf(v => !v)}
+          myStatusDot={STATUS_META[myStatus].dot}
+          myStatusColor={STATUS_META[myStatus].color}
+          myStatusLabel={STATUS_META[myStatus].label}
+          onOpenStatusMenu={() => setStatusMenuOpen(v => !v)}
+        />
+      )}
+
+      {/* SERVERS MODE */}
       {/* Channels panel */}
-      <div className="flex flex-col w-[220px] shrink-0" style={{ background: "var(--dark-panel)", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
+      {!dmMode && <div className="flex flex-col w-[220px] shrink-0" style={{ background: "var(--dark-panel)", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
         {/* Server header */}
         <div className="px-3 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid rgba(0,255,136,0.1)" }}>
           <div className="flex-1 cursor-pointer hover:opacity-90 transition-all" onClick={() => setShowServerSettings(true)}>
@@ -547,10 +564,10 @@ export default function Index({ user, onLogout }: IndexProps) {
             </div>
           </div>
         </div>
-      </div>
+      </div>}
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* Main content — only in server mode */}
+      {!dmMode && <div className="flex-1 flex flex-col min-w-0" key={activeServer}>
 
         {/* Header */}
         <div className="flex items-center px-4 py-2.5 shrink-0" style={{ background: "var(--dark-panel)", borderBottom: "1px solid rgba(0,255,136,0.08)" }}>
@@ -899,10 +916,10 @@ export default function Index({ user, onLogout }: IndexProps) {
           )}
 
         </div>
-      </div>
+      </div>}
 
-      {/* Members sidebar */}
-      {activeTab === "chat" && (
+      {/* Members sidebar — only in server mode */}
+      {!dmMode && activeTab === "chat" && (
         <div className="w-[210px] shrink-0 overflow-y-auto py-3" style={{ background: "var(--dark-panel)", borderLeft: "1px solid rgba(0,255,136,0.08)" }}>
           <div className="px-3">
             {/* Group by role */}
