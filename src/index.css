@@ -4,89 +4,38 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-
-    --radius: 0.5rem;
-
-    --sidebar-background: 0 0% 98%;
-
-    --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
-  }
-
-  .dark {
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
-
-    --card: 222.2 84% 4.9%;
+    --card: 220 30% 8%;
     --card-foreground: 210 40% 98%;
-
-    --popover: 222.2 84% 4.9%;
+    --popover: 220 30% 8%;
     --popover-foreground: 210 40% 98%;
-
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-
+    --primary: 150 100% 50%;
+    --primary-foreground: 222.2 47.4% 4%;
     --secondary: 217.2 32.6% 17.5%;
     --secondary-foreground: 210 40% 98%;
-
     --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-
-    --accent: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 55%;
+    --accent: 300 100% 55%;
     --accent-foreground: 210 40% 98%;
-
-    --destructive: 0 62.8% 30.6%;
+    --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
-
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --ring: 150 100% 50%;
+    --radius: 0.75rem;
+
+    /* Game colors */
+    --neon-green: #00ff88;
+    --neon-pink: #ff00aa;
+    --neon-blue: #00aaff;
+    --neon-orange: #ff6600;
+    --dark-bg: #080c14;
+    --dark-panel: #0d1424;
+    --dark-card: #111a2e;
+    --dark-hover: #162040;
+    --border-glow: rgba(0, 255, 136, 0.15);
+    --text-dim: #6b7fa3;
   }
 }
 
@@ -97,5 +46,238 @@
 
   body {
     @apply bg-background text-foreground;
+    font-family: "IBM Plex Sans", sans-serif;
+    background-color: var(--dark-bg);
+    overflow: hidden;
   }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--dark-panel);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 255, 136, 0.3);
+    border-radius: 2px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 255, 136, 0.6);
+  }
+}
+
+@layer utilities {
+  .font-orbitron {
+    font-family: "Orbitron", sans-serif;
+  }
+
+  .font-rajdhani {
+    font-family: "Rajdhani", sans-serif;
+  }
+
+  .font-ibm {
+    font-family: "IBM Plex Sans", sans-serif;
+  }
+
+  .neon-text-green {
+    color: var(--neon-green);
+    text-shadow: 0 0 10px rgba(0, 255, 136, 0.7);
+  }
+
+  .neon-text-pink {
+    color: var(--neon-pink);
+    text-shadow: 0 0 10px rgba(255, 0, 170, 0.7);
+  }
+
+  .neon-text-blue {
+    color: var(--neon-blue);
+    text-shadow: 0 0 10px rgba(0, 170, 255, 0.7);
+  }
+
+  .neon-border-green {
+    border-color: var(--neon-green);
+    box-shadow: 0 0 8px rgba(0, 255, 136, 0.3);
+  }
+
+  .neon-border-pink {
+    border-color: var(--neon-pink);
+    box-shadow: 0 0 8px rgba(255, 0, 170, 0.3);
+  }
+
+  .panel-bg {
+    background-color: var(--dark-panel);
+  }
+
+  .card-bg {
+    background-color: var(--dark-card);
+  }
+
+  .hover-glow:hover {
+    background-color: var(--dark-hover);
+    box-shadow: inset 3px 0 0 var(--neon-green);
+  }
+
+  .active-channel {
+    background-color: var(--dark-hover);
+    box-shadow: inset 3px 0 0 var(--neon-green);
+  }
+
+  .glow-pulse {
+    animation: glowPulse 2s ease-in-out infinite;
+  }
+
+  .scan-line::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--neon-green),
+      transparent
+    );
+    animation: scanLine 3s linear infinite;
+  }
+
+  .status-online {
+    background-color: var(--neon-green);
+    box-shadow: 0 0 6px var(--neon-green);
+  }
+
+  .status-streaming {
+    background-color: var(--neon-pink);
+    box-shadow: 0 0 6px var(--neon-pink);
+    animation: glowPulse 1s ease-in-out infinite;
+  }
+
+  .status-away {
+    background-color: var(--neon-orange);
+    box-shadow: 0 0 6px var(--neon-orange);
+  }
+
+  .status-offline {
+    background-color: #374151;
+  }
+
+  .grid-bg {
+    background-image:
+      linear-gradient(rgba(0, 255, 136, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 255, 136, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .stream-border {
+    border: 2px solid var(--neon-pink);
+    box-shadow:
+      0 0 20px rgba(255, 0, 170, 0.4),
+      inset 0 0 20px rgba(255, 0, 170, 0.05);
+    animation: streamGlow 2s ease-in-out infinite;
+  }
+
+  .badge-role {
+    font-family: "Rajdhani", sans-serif;
+    font-weight: 600;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+  }
+
+  .animate-slide-in {
+    animation: slideIn 0.3s ease-out;
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.4s ease-out;
+  }
+
+  .animate-pulse-slow {
+    animation: glowPulse 3s ease-in-out infinite;
+  }
+}
+
+@keyframes glowPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes scanLine {
+  0% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh);
+    opacity: 0;
+  }
+}
+
+@keyframes streamGlow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 20px rgba(255, 0, 170, 0.4),
+      inset 0 0 20px rgba(255, 0, 170, 0.05);
+  }
+  50% {
+    box-shadow:
+      0 0 40px rgba(255, 0, 170, 0.7),
+      inset 0 0 30px rgba(255, 0, 170, 0.1);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(-10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes typing {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-6px);
+  }
+}
+
+.typing-dot {
+  animation: typing 1.4s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
 }
