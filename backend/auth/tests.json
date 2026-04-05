@@ -1,0 +1,48 @@
+{
+  "tests": [
+    {
+      "name": "Health check",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200,
+      "expectedBody": {"ok": true},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Register new user",
+      "method": "POST",
+      "path": "/?action=register",
+      "body": {"username": "TestUser99", "email": "testuser99@example.com", "password": "secret123"},
+      "expectedStatus": 200,
+      "expectedBody": {"token": "string"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Duplicate register",
+      "method": "POST",
+      "path": "/?action=register",
+      "body": {"username": "TestUser99", "email": "testuser99@example.com", "password": "secret123"},
+      "expectedStatus": 409,
+      "expectedBody": {"error": "string"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Login",
+      "method": "POST",
+      "path": "/?action=login",
+      "body": {"login": "testuser99", "password": "secret123"},
+      "expectedStatus": 200,
+      "expectedBody": {"token": "string"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Wrong password",
+      "method": "POST",
+      "path": "/?action=login",
+      "body": {"login": "testuser99", "password": "wrongpass"},
+      "expectedStatus": 401,
+      "expectedBody": {"error": "string"},
+      "bodyMatcher": "partial"
+    }
+  ]
+}

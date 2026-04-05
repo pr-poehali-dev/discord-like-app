@@ -1,6 +1,19 @@
 import { useState } from "react";
 import Icon from "@/components/ui/icon";
 
+interface User {
+  id: number;
+  username: string;
+  email: string;
+  avatar_color: string;
+  status: string;
+}
+
+interface IndexProps {
+  user: User;
+  onLogout: () => void;
+}
+
 const SERVERS = [
   { id: 1, name: "NEXUS", abbr: "NX", color: "#00ff88", members: 1247, unread: 3 },
   { id: 2, name: "VOID SQUAD", abbr: "VS", color: "#ff00aa", members: 834, unread: 12 },
@@ -82,7 +95,7 @@ const ROLES = [
 
 type Tab = "chat" | "streaming" | "users" | "roles" | "settings";
 
-export default function Index() {
+export default function Index({ user, onLogout }: IndexProps) {
   const [activeServer, setActiveServer] = useState(1);
   const [activeChannel, setActiveChannel] = useState(1);
   const [activeTab, setActiveTab] = useState<Tab>("chat");
@@ -253,19 +266,21 @@ export default function Index() {
         <div className="px-2 py-2" style={{ borderTop: "1px solid rgba(0,255,136,0.08)" }}>
           <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: "rgba(0,255,136,0.05)" }}>
             <div className="relative">
-              <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(135deg, #00ff88, #00aaff)", color: "#060a11", fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>ВЫ</div>
+              <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: user.avatar_color + "33", border: `1px solid ${user.avatar_color}55`, color: user.avatar_color, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
+                {user.username.slice(0, 2).toUpperCase()}
+              </div>
               <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 status-online" style={{ borderColor: "var(--dark-panel)" }} />
             </div>
             <div className="flex-1 min-w-0">
-              <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", color: "#00ff88", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>CyberWolf</div>
-              <div style={{ fontSize: "10px", color: "#6b7fa3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Admin · Online</div>
+              <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", color: user.avatar_color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.username}</div>
+              <div style={{ fontSize: "10px", color: "#6b7fa3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Online</div>
             </div>
             <div className="flex gap-1">
               <button className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(255,255,255,0.05)" }}>
                 <Icon name="Mic" size={12} style={{ color: "#6b7fa3" }} />
               </button>
-              <button className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(255,255,255,0.05)" }}>
-                <Icon name="Settings" size={12} style={{ color: "#6b7fa3" }} />
+              <button onClick={onLogout} title="Выйти" className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(255,255,255,0.05)" }}>
+                <Icon name="LogOut" size={12} style={{ color: "#6b7fa3" }} />
               </button>
             </div>
           </div>
