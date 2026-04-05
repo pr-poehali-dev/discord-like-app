@@ -1,5 +1,7 @@
 import { useState } from "react";
 import Icon from "@/components/ui/icon";
+import ServerSettings from "@/components/ServerSettings";
+import UserSettings from "@/components/UserSettings";
 
 interface User {
   id: number;
@@ -105,6 +107,10 @@ export default function Index({ user, onLogout }: IndexProps) {
   const [expandForum, setExpandForum] = useState(false);
   const [streamActive, setStreamActive] = useState(false);
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
+  const [micMuted, setMicMuted] = useState(false);
+  const [headphonesDeaf, setHeadphonesDeaf] = useState(false);
+  const [showServerSettings, setShowServerSettings] = useState(false);
+  const [showUserSettings, setShowUserSettings] = useState(false);
 
   const server = SERVERS.find(s => s.id === activeServer)!;
   const channel = CHANNELS.text.find(c => c.id === activeChannel) || CHANNELS.text[0];
@@ -127,6 +133,8 @@ export default function Index({ user, onLogout }: IndexProps) {
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--dark-bg)", fontFamily: "IBM Plex Sans, sans-serif" }}>
+      {showServerSettings && <ServerSettings server={server} onClose={() => setShowServerSettings(false)} />}
+      {showUserSettings && <UserSettings user={user} onClose={() => setShowUserSettings(false)} onLogout={onLogout} />}
 
       {/* Servers sidebar */}
       <div className="flex flex-col items-center py-4 gap-2 w-[68px] shrink-0" style={{ background: "#060a11", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
@@ -171,14 +179,16 @@ export default function Index({ user, onLogout }: IndexProps) {
       {/* Channels panel */}
       <div className="flex flex-col w-[220px] shrink-0" style={{ background: "var(--dark-panel)", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
         {/* Server header */}
-        <div className="px-3 py-3 flex items-center justify-between cursor-pointer hover:opacity-90 transition-all" style={{ borderBottom: "1px solid rgba(0,255,136,0.1)" }}>
-          <div>
+        <div className="px-3 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid rgba(0,255,136,0.1)" }}>
+          <div className="flex-1 cursor-pointer hover:opacity-90 transition-all" onClick={() => setShowServerSettings(true)}>
             <div style={{ fontFamily: "Orbitron, sans-serif", fontWeight: 700, fontSize: "13px", color: server.color, textShadow: `0 0 8px ${server.color}88`, letterSpacing: "1px" }}>
               {server.name}
             </div>
             <div style={{ fontSize: "11px", color: "#6b7fa3", marginTop: "2px" }}>{server.members.toLocaleString()} участников</div>
           </div>
-          <Icon name="ChevronDown" size={14} style={{ color: "#6b7fa3" }} />
+          <button onClick={() => setShowServerSettings(true)} className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 transition-opacity" title="Настройки сервера">
+            <Icon name="Settings" size={13} style={{ color: "#6b7fa3" }} />
+          </button>
         </div>
 
         {/* Nav tabs */}
@@ -265,22 +275,31 @@ export default function Index({ user, onLogout }: IndexProps) {
         {/* User footer */}
         <div className="px-2 py-2" style={{ borderTop: "1px solid rgba(0,255,136,0.08)" }}>
           <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: "rgba(0,255,136,0.05)" }}>
-            <div className="relative">
-              <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: user.avatar_color + "33", border: `1px solid ${user.avatar_color}55`, color: user.avatar_color, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
+            <button className="relative shrink-0" onClick={() => setShowUserSettings(true)} title="Настройки профиля">
+              <div className="w-7 h-7 rounded-full flex items-center justify-center hover:ring-2 transition-all" style={{ background: user.avatar_color + "33", border: `1px solid ${user.avatar_color}55`, color: user.avatar_color, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px", ringColor: user.avatar_color }}>
                 {user.username.slice(0, 2).toUpperCase()}
               </div>
-              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 status-online" style={{ borderColor: "var(--dark-panel)" }} />
-            </div>
-            <div className="flex-1 min-w-0">
+              <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 ${micMuted ? "status-away" : "status-online"}`} style={{ borderColor: "var(--dark-panel)" }} />
+            </button>
+            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setShowUserSettings(true)}>
               <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", color: user.avatar_color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.username}</div>
-              <div style={{ fontSize: "10px", color: "#6b7fa3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Online</div>
+              <div style={{ fontSize: "10px", color: micMuted ? "#ff6600" : "#6b7fa3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{micMuted ? "Мик выключен" : headphonesDeaf ? "Заглушён" : "Online"}</div>
             </div>
             <div className="flex gap-1">
-              <button className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(255,255,255,0.05)" }}>
-                <Icon name="Mic" size={12} style={{ color: "#6b7fa3" }} />
+              <button onClick={() => setMicMuted(v => !v)} title={micMuted ? "Включить микрофон" : "Выключить микрофон"}
+                className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 transition-opacity"
+                style={{ background: micMuted ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.05)" }}>
+                <Icon name={micMuted ? "MicOff" : "Mic"} size={12} style={{ color: micMuted ? "#ff4444" : "#6b7fa3" }} />
               </button>
-              <button onClick={onLogout} title="Выйти" className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(255,255,255,0.05)" }}>
-                <Icon name="LogOut" size={12} style={{ color: "#6b7fa3" }} />
+              <button onClick={() => setHeadphonesDeaf(v => !v)} title={headphonesDeaf ? "Включить звук" : "Заглушить наушники"}
+                className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 transition-opacity"
+                style={{ background: headphonesDeaf ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.05)" }}>
+                <Icon name={headphonesDeaf ? "VolumeX" : "Headphones"} size={12} style={{ color: headphonesDeaf ? "#ff4444" : "#6b7fa3" }} />
+              </button>
+              <button onClick={() => setShowUserSettings(true)} title="Настройки"
+                className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 transition-opacity"
+                style={{ background: "rgba(255,255,255,0.05)" }}>
+                <Icon name="Settings" size={12} style={{ color: "#6b7fa3" }} />
               </button>
             </div>
           </div>
@@ -388,23 +407,38 @@ export default function Index({ user, onLogout }: IndexProps) {
           {/* Streaming */}
           {activeTab === "streaming" && (
             <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-2 px-3 py-1 rounded-full animate-pulse-slow" style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "13px", background: "rgba(255,0,170,0.15)", color: "#ff00aa", border: "1px solid rgba(255,0,170,0.3)" }}>
                   <div className="w-2 h-2 rounded-full glow-pulse" style={{ background: "#ff00aa" }} />
                   LIVE: NeonShadow
                 </div>
                 <span style={{ fontSize: "13px", color: "#6b7fa3", fontFamily: "IBM Plex Sans, sans-serif" }}>Арена #1 · 847 зрителей</span>
+                {/* My mic+deaf quick controls */}
+                <div className="flex items-center gap-2 ml-auto">
+                  <button onClick={() => setMicMuted(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all"
+                    style={{ background: micMuted ? "rgba(255,68,68,0.15)" : "rgba(255,255,255,0.06)", color: micMuted ? "#ff4444" : "#6b7fa3", border: micMuted ? "1px solid rgba(255,68,68,0.3)" : "1px solid transparent", fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px" }}>
+                    <Icon name={micMuted ? "MicOff" : "Mic"} size={14} />
+                    {micMuted ? "Мик выкл" : "Мик вкл"}
+                  </button>
+                  <button onClick={() => setHeadphonesDeaf(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all"
+                    style={{ background: headphonesDeaf ? "rgba(255,68,68,0.15)" : "rgba(255,255,255,0.06)", color: headphonesDeaf ? "#ff4444" : "#6b7fa3", border: headphonesDeaf ? "1px solid rgba(255,68,68,0.3)" : "1px solid transparent", fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px" }}>
+                    <Icon name={headphonesDeaf ? "VolumeX" : "Headphones"} size={14} />
+                    {headphonesDeaf ? "Глушилка" : "Звук вкл"}
+                  </button>
+                </div>
               </div>
 
               {/* Stream screen */}
               <div className="relative rounded-2xl overflow-hidden stream-border" style={{ background: "linear-gradient(135deg, #0a0f1a, #0d1424)", aspectRatio: "16/9" }}>
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
                   <div className="w-20 h-20 rounded-full flex items-center justify-center" style={{ background: "rgba(255,0,170,0.15)", border: "2px solid rgba(255,0,170,0.3)" }}>
-                    <Icon name="Monitor" size={36} style={{ color: "#ff00aa" }} />
+                    <Icon name={streamActive ? "MonitorPlay" : "Monitor"} size={36} style={{ color: "#ff00aa" }} />
                   </div>
                   <div className="text-center">
-                    <div style={{ fontFamily: "Orbitron, sans-serif", fontWeight: 700, fontSize: "22px", color: "#ff00aa", textShadow: "0 0 20px rgba(255,0,170,0.7)", marginBottom: "6px" }}>NeonShadow LIVE</div>
-                    <div style={{ fontFamily: "Rajdhani, sans-serif", fontSize: "14px", color: "#6b7fa3" }}>Cyber Arena · Рейд на 3-ю зону</div>
+                    <div style={{ fontFamily: "Orbitron, sans-serif", fontWeight: 700, fontSize: "22px", color: streamActive ? "#00ff88" : "#ff00aa", textShadow: `0 0 20px ${streamActive ? "rgba(0,255,136,0.7)" : "rgba(255,0,170,0.7)"}`, marginBottom: "6px" }}>
+                      {streamActive ? "Ваша трансляция идёт" : "NeonShadow LIVE"}
+                    </div>
+                    <div style={{ fontFamily: "Rajdhani, sans-serif", fontSize: "14px", color: "#6b7fa3" }}>{streamActive ? "Транслируете экран участникам" : "Cyber Arena · Рейд на 3-ю зону"}</div>
                   </div>
                   <button
                     onClick={() => setStreamActive(v => !v)}
@@ -412,30 +446,42 @@ export default function Index({ user, onLogout }: IndexProps) {
                     style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "14px", background: streamActive ? "rgba(255,0,170,0.2)" : "rgba(0,255,136,0.15)", color: streamActive ? "#ff00aa" : "#00ff88", border: `1px solid ${streamActive ? "#ff00aa55" : "#00ff8855"}` }}
                   >
                     <Icon name={streamActive ? "MonitorOff" : "MonitorPlay"} size={16} />
-                    {streamActive ? "Остановить трансляцию" : "Начать трансляцию экрана"}
+                    {streamActive ? "Остановить трансляцию" : "Начать трансляцию"}
                   </button>
                 </div>
-                <div className="absolute top-3 right-3 flex items-center gap-1.5 px-2 py-1 rounded-lg" style={{ background: "rgba(0,0,0,0.7)", border: "1px solid rgba(255,0,170,0.3)" }}>
-                  <div className="w-1.5 h-1.5 rounded-full glow-pulse" style={{ background: "#ff00aa" }} />
-                  <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "11px", color: "#ff00aa" }}>LIVE</span>
-                </div>
+                {streamActive && (
+                  <div className="absolute top-3 right-3 flex items-center gap-1.5 px-2 py-1 rounded-lg" style={{ background: "rgba(0,0,0,0.7)", border: "1px solid rgba(0,255,136,0.3)" }}>
+                    <div className="w-1.5 h-1.5 rounded-full glow-pulse" style={{ background: "#00ff88" }} />
+                    <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "11px", color: "#00ff88" }}>В ЭФИРЕ</span>
+                  </div>
+                )}
+                {!streamActive && (
+                  <div className="absolute top-3 right-3 flex items-center gap-1.5 px-2 py-1 rounded-lg" style={{ background: "rgba(0,0,0,0.7)", border: "1px solid rgba(255,0,170,0.3)" }}>
+                    <div className="w-1.5 h-1.5 rounded-full glow-pulse" style={{ background: "#ff00aa" }} />
+                    <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "11px", color: "#ff00aa" }}>LIVE</span>
+                  </div>
+                )}
               </div>
 
-              {/* Stream options */}
-              <div className="grid grid-cols-3 gap-3">
-                {[
-                  { icon: "Monitor", label: "Весь экран", desc: "Трансляция рабочего стола", color: "#00ff88" },
-                  { icon: "AppWindow", label: "Окно", desc: "Выбрать приложение", color: "#00aaff" },
-                  { icon: "Video", label: "Камера", desc: "Веб-камера + экран", color: "#aa00ff" },
-                ].map((opt, i) => (
-                  <button key={i} className="flex flex-col items-center gap-2 p-4 rounded-xl transition-all hover:opacity-80" style={{ background: opt.color + "11", border: `1px solid ${opt.color}33` }}>
-                    <Icon name={opt.icon} size={24} style={{ color: opt.color }} />
-                    <div>
-                      <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "14px", color: "#e2e8f0" }}>{opt.label}</div>
-                      <div style={{ fontSize: "12px", color: "#6b7fa3" }}>{opt.desc}</div>
-                    </div>
-                  </button>
-                ))}
+              {/* Stream source options */}
+              <div>
+                <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "11px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "10px" }}>Источник трансляции</div>
+                <div className="grid grid-cols-4 gap-3">
+                  {[
+                    { icon: "Monitor", label: "Весь экран", desc: "Рабочий стол", color: "#00ff88" },
+                    { icon: "AppWindow", label: "Приложение", desc: "Выбрать окно", color: "#00aaff" },
+                    { icon: "Gamepad2", label: "Игра", desc: "Захват игры", color: "#aa00ff" },
+                    { icon: "Video", label: "Камера", desc: "Веб-камера", color: "#ff00aa" },
+                  ].map((opt, i) => (
+                    <button key={i} onClick={() => setStreamActive(true)} className="flex flex-col items-center gap-2 p-3 rounded-xl transition-all hover:opacity-80 active:scale-95" style={{ background: opt.color + "11", border: `1px solid ${opt.color}33` }}>
+                      <Icon name={opt.icon} size={22} style={{ color: opt.color }} />
+                      <div>
+                        <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "13px", color: "#e2e8f0" }}>{opt.label}</div>
+                        <div style={{ fontSize: "11px", color: "#6b7fa3" }}>{opt.desc}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Active streamers */}
@@ -443,15 +489,18 @@ export default function Index({ user, onLogout }: IndexProps) {
                 <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "11px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "12px" }}>Активные трансляции</div>
                 <div className="space-y-2">
                   {[
-                    { name: "NeonShadow", viewers: 847, game: "Cyber Arena", color: "#ff00aa" },
-                    { name: "PixelKnight", viewers: 234, game: "Void Tactics", color: "#00aaff" },
+                    { name: "NeonShadow", viewers: 847, game: "Cyber Arena", color: "#ff00aa", source: "Игра" },
+                    { name: "PixelKnight", viewers: 234, game: "Void Tactics", color: "#00aaff", source: "Приложение" },
                   ].map((s, i) => (
                     <div key={i} className="flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all hover:opacity-80" style={{ background: "var(--dark-card)", border: "1px solid rgba(255,255,255,0.05)" }}>
                       <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: s.color + "22", color: s.color, border: `1px solid ${s.color}44`, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px" }}>
                         {s.name.slice(0, 2).toUpperCase()}
                       </div>
                       <div className="flex-1">
-                        <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "14px", color: "#e2e8f0" }}>{s.name}</div>
+                        <div className="flex items-center gap-2">
+                          <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "14px", color: "#e2e8f0" }}>{s.name}</span>
+                          <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px", background: s.color + "22", color: s.color, padding: "1px 5px", borderRadius: "3px" }}>{s.source}</span>
+                        </div>
                         <div style={{ fontSize: "12px", color: "#6b7fa3" }}>{s.game}</div>
                       </div>
                       <div className="flex items-center gap-1.5">
