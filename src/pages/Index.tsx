@@ -29,116 +29,278 @@ const INITIAL_SERVERS = [
   { id: 5, name: "ALPHA TEAM", abbr: "AT", color: "#aa00ff", members: 189, unread: 0 },
 ];
 
-const CHANNELS = {
-  text: [
-    { id: 1, name: "общий", unread: 5, pinned: true },
-    { id: 2, name: "игры", unread: 0 },
-    { id: 3, name: "стратегии", unread: 2 },
-    { id: 4, name: "объявления", unread: 0, locked: true },
-    { id: 5, name: "медиа", unread: 0 },
-  ],
-  voice: [
-    { id: 6, name: "Арена #1", users: 3, streaming: true },
-    { id: 7, name: "Арена #2", users: 0, streaming: false },
-    { id: 8, name: "Штаб командира", users: 1, streaming: false },
-  ],
-  forum: [
-    { id: 9, name: "тактики", posts: 47 },
-    { id: 10, name: "рекруты", posts: 12 },
-  ]
+interface TextChannel { id: number; name: string; unread?: number; pinned?: boolean; locked?: boolean; }
+interface VoiceChannel { id: number; name: string; users: number; streaming: boolean; }
+interface ForumChannel { id: number; name: string; posts: number; }
+interface ServerChannels { text: TextChannel[]; voice: VoiceChannel[]; forum: ForumChannel[]; }
+interface ServerMember { id: number; name: string; role: string; roleColor: string; status: string; avatar: string; game: string; color: string; }
+interface ServerRole { id: number; name: string; color: string; members: number; perms: string[]; }
+interface Msg { id: number; user: string; avatar: string; color: string; role: string; roleColor: string; time: string; text: string; reactions: { emoji: string; count: number }[]; }
+
+const SERVER_DATA: Record<number, { channels: ServerChannels; members: ServerMember[]; roles: ServerRole[]; messages: Record<number, Msg[]> }> = {
+  1: {
+    channels: {
+      text: [
+        { id: 101, name: "общий", unread: 5, pinned: true },
+        { id: 102, name: "игры", unread: 0 },
+        { id: 103, name: "стратегии", unread: 2 },
+        { id: 104, name: "объявления", unread: 0, locked: true },
+        { id: 105, name: "медиа", unread: 0 },
+      ],
+      voice: [
+        { id: 151, name: "Арена #1", users: 3, streaming: true },
+        { id: 152, name: "Арена #2", users: 0, streaming: false },
+        { id: 153, name: "Штаб командира", users: 1, streaming: false },
+      ],
+      forum: [{ id: 191, name: "тактики", posts: 47 }, { id: 192, name: "рекруты", posts: 12 }],
+    },
+    roles: [
+      { id: 1, name: "Admin", color: "#00ff88", members: 1, perms: ["Все права", "Управление сервером", "Бан/Кик"] },
+      { id: 2, name: "Mod", color: "#ff00aa", members: 2, perms: ["Управление каналами", "Удаление сообщений"] },
+      { id: 3, name: "Боец", color: "#00aaff", members: 48, perms: ["Голосовой чат", "Стриминг"] },
+      { id: 4, name: "Разведчик", color: "#aa00ff", members: 15, perms: ["Специальные каналы"] },
+      { id: 5, name: "Рекрут", color: "#6b7fa3", members: 234, perms: ["Чтение каналов", "Текстовый чат"] },
+    ],
+    members: [
+      { id: 1, name: "CyberWolf", role: "Admin", roleColor: "#00ff88", color: "#00ff88", status: "online", avatar: "CW", game: "Cyber Arena" },
+      { id: 2, name: "NeonShadow", role: "Mod", roleColor: "#ff00aa", color: "#ff00aa", status: "streaming", avatar: "NS", game: "🔴 В эфире" },
+      { id: 3, name: "PixelKnight", role: "Боец", roleColor: "#00aaff", color: "#00aaff", status: "online", avatar: "PK", game: "Cyber Arena" },
+      { id: 4, name: "GhostRunner", role: "Разведчик", roleColor: "#aa00ff", color: "#aa00ff", status: "online", avatar: "GR", game: "Cyber Arena" },
+      { id: 5, name: "IronCore", role: "Боец", roleColor: "#00aaff", color: "#00aaff", status: "away", avatar: "IC", game: "Away" },
+      { id: 6, name: "VoidHunter", role: "Рекрут", roleColor: "#6b7fa3", color: "#6b7fa3", status: "online", avatar: "VH", game: "Lobby" },
+      { id: 7, name: "StarForge", role: "Рекрут", roleColor: "#6b7fa3", color: "#6b7fa3", status: "offline", avatar: "SF", game: "" },
+    ],
+    messages: {
+      101: [
+        { id: 1, user: "CyberWolf", avatar: "CW", color: "#00ff88", role: "Admin", roleColor: "#00ff88", time: "19:42", text: "Всем привет! Сегодня в 21:00 рейд на третью зону. Нужны все доступные бойцы.", reactions: [{ emoji: "🔥", count: 12 }, { emoji: "⚔️", count: 8 }] },
+        { id: 2, user: "NeonShadow", avatar: "NS", color: "#ff00aa", role: "Mod", roleColor: "#ff00aa", time: "19:44", text: "Готов! Буду стримить для тех кто не успеет. Подключайтесь к Арена #1", reactions: [{ emoji: "👀", count: 5 }] },
+        { id: 3, user: "PixelKnight", avatar: "PK", color: "#00aaff", role: "Боец", roleColor: "#00aaff", time: "19:47", text: "Тактика как в прошлый раз или меняем подход? У меня есть идея насчёт фланговой атаки", reactions: [] },
+        { id: 4, user: "GhostRunner", avatar: "GR", color: "#aa00ff", role: "Разведчик", roleColor: "#aa00ff", time: "19:51", text: "Флаг поддерживаю. Прошлый раз лобовая атака стоила нам 40 минут. Нужна скорость.", reactions: [{ emoji: "💡", count: 9 }, { emoji: "✅", count: 14 }] },
+        { id: 5, user: "CyberWolf", avatar: "CW", color: "#00ff88", role: "Admin", roleColor: "#00ff88", time: "19:53", text: "Принято. GhostRunner ведёт разведку, PixelKnight командует флангом. Брифинг в 20:45.", reactions: [{ emoji: "🎯", count: 17 }] },
+      ],
+      102: [
+        { id: 1, user: "VoidHunter", avatar: "VH", color: "#6b7fa3", role: "Рекрут", roleColor: "#6b7fa3", time: "18:00", text: "Кто-нибудь играет в новый Cyber Arena сезон? Там добавили новую карту!", reactions: [{ emoji: "🎮", count: 4 }] },
+        { id: 2, user: "IronCore", avatar: "IC", color: "#00aaff", role: "Боец", roleColor: "#00aaff", time: "18:10", text: "Да! Карта огонь. Особенно новая точка B с порталами", reactions: [] },
+      ],
+      103: [
+        { id: 1, user: "GhostRunner", avatar: "GR", color: "#aa00ff", role: "Разведчик", roleColor: "#aa00ff", time: "17:30", text: "Разбираем новую тактику 3-2 с прикрытием фланга. Нужны видео для анализа.", reactions: [{ emoji: "📊", count: 6 }] },
+      ],
+      104: [
+        { id: 1, user: "CyberWolf", avatar: "CW", color: "#00ff88", role: "Admin", roleColor: "#00ff88", time: "10:00", text: "📢 Турнир NEXUS CUP стартует 15 апреля! Записывайтесь в #стратегии", reactions: [{ emoji: "🏆", count: 23 }] },
+      ],
+      105: [
+        { id: 1, user: "NeonShadow", avatar: "NS", color: "#ff00aa", role: "Mod", roleColor: "#ff00aa", time: "20:00", text: "Запись рейда прошлой недели. Разбор ошибок в 15:40 🎥", reactions: [{ emoji: "👀", count: 11 }] },
+      ],
+    },
+  },
+  2: {
+    channels: {
+      text: [
+        { id: 201, name: "void-chat", unread: 12 },
+        { id: 202, name: "тактика", unread: 0 },
+        { id: 203, name: "набор", unread: 0 },
+        { id: 204, name: "новости", unread: 0, locked: true },
+      ],
+      voice: [
+        { id: 251, name: "Войд Лобби", users: 5, streaming: false },
+        { id: 252, name: "Рейд-канал", users: 2, streaming: true },
+      ],
+      forum: [{ id: 291, name: "обсуждения", posts: 28 }],
+    },
+    roles: [
+      { id: 1, name: "Void Leader", color: "#ff00aa", members: 1, perms: ["Все права"] },
+      { id: 2, name: "Void Elder", color: "#ff6699", members: 3, perms: ["Управление", "Бан"] },
+      { id: 3, name: "Void Scout", color: "#aa0066", members: 22, perms: ["Голос", "Стриминг"] },
+      { id: 4, name: "Recruit", color: "#4a3050", members: 98, perms: ["Читать", "Писать"] },
+    ],
+    members: [
+      { id: 10, name: "VoidMaster", role: "Void Leader", roleColor: "#ff00aa", color: "#ff00aa", status: "online", avatar: "VM", game: "Dota 2" },
+      { id: 11, name: "ShadowBlade", role: "Void Elder", roleColor: "#ff6699", color: "#ff6699", status: "online", avatar: "SB", game: "VALORANT" },
+      { id: 12, name: "DarkPhoenix", role: "Void Scout", roleColor: "#aa0066", color: "#aa0066", status: "away", avatar: "DP", game: "" },
+      { id: 13, name: "NightWalker", role: "Recruit", roleColor: "#4a3050", color: "#9966aa", status: "offline", avatar: "NW", game: "" },
+    ],
+    messages: {
+      201: [
+        { id: 1, user: "VoidMaster", avatar: "VM", color: "#ff00aa", role: "Void Leader", roleColor: "#ff00aa", time: "20:00", text: "Войд сквад — лучшая команда региона! Сегодня финал турнира в 22:00 🏆", reactions: [{ emoji: "💜", count: 18 }] },
+        { id: 2, user: "ShadowBlade", avatar: "SB", color: "#ff6699", role: "Void Elder", roleColor: "#ff6699", time: "20:05", text: "Готов. Стрим будет на нашем канале. Ссылка в #новости", reactions: [{ emoji: "🔥", count: 7 }] },
+        { id: 3, user: "DarkPhoenix", avatar: "DP", color: "#aa0066", role: "Void Scout", roleColor: "#aa0066", time: "20:10", text: "Немного опоздаю, пробки. Буду к 21:45", reactions: [] },
+      ],
+      202: [
+        { id: 1, user: "VoidMaster", avatar: "VM", color: "#ff00aa", role: "Void Leader", roleColor: "#ff00aa", time: "15:00", text: "Разбираем карту Fracture — важные точки для финала", reactions: [{ emoji: "📌", count: 5 }] },
+      ],
+    },
+  },
+  3: {
+    channels: {
+      text: [
+        { id: 301, name: "главная", unread: 0, pinned: true },
+        { id: 302, name: "гильдия", unread: 0 },
+        { id: 303, name: "ивенты", unread: 0 },
+        { id: 304, name: "торговля", unread: 0 },
+        { id: 305, name: "правила", unread: 0, locked: true },
+      ],
+      voice: [
+        { id: 351, name: "Зал совета", users: 1, streaming: false },
+        { id: 352, name: "Рейд А", users: 4, streaming: false },
+        { id: 353, name: "Рейд Б", users: 0, streaming: false },
+        { id: 354, name: "АФК", users: 2, streaming: false },
+      ],
+      forum: [{ id: 391, name: "гайды", posts: 115 }, { id: 392, name: "история", posts: 34 }],
+    },
+    roles: [
+      { id: 1, name: "Архимаг", color: "#00aaff", members: 1, perms: ["Все права"] },
+      { id: 2, name: "Маг", color: "#4488ff", members: 8, perms: ["Управление"] },
+      { id: 3, name: "Рыцарь", color: "#0066cc", members: 67, perms: ["Голос", "Стриминг"] },
+      { id: 4, name: "Адепт", color: "#003399", members: 340, perms: ["Читать", "Писать"] },
+    ],
+    members: [
+      { id: 20, name: "ArcMage", role: "Архимаг", roleColor: "#00aaff", color: "#00aaff", status: "online", avatar: "AM", game: "WoW" },
+      { id: 21, name: "BlueFrost", role: "Маг", roleColor: "#4488ff", color: "#4488ff", status: "online", avatar: "BF", game: "ESO" },
+      { id: 22, name: "IceKnight", role: "Рыцарь", roleColor: "#0066cc", color: "#0066cc", status: "away", avatar: "IK", game: "" },
+      { id: 23, name: "AquaStrike", role: "Адепт", roleColor: "#003399", color: "#6699ff", status: "offline", avatar: "AS", game: "" },
+    ],
+    messages: {
+      301: [
+        { id: 1, user: "ArcMage", avatar: "AM", color: "#00aaff", role: "Архимаг", roleColor: "#00aaff", time: "12:00", text: "Cyber Guild — 2103 участника! Рекорд сервера! Спасибо всем за доверие 💙", reactions: [{ emoji: "💙", count: 45 }, { emoji: "🏆", count: 22 }] },
+        { id: 2, user: "BlueFrost", avatar: "BF", color: "#4488ff", role: "Маг", roleColor: "#4488ff", time: "12:10", text: "Такой рост за последний месяц — потрясающий результат команды", reactions: [{ emoji: "🎉", count: 13 }] },
+      ],
+    },
+  },
+  4: {
+    channels: {
+      text: [
+        { id: 401, name: "тьма", unread: 1 },
+        { id: 402, name: "хаос", unread: 0 },
+        { id: 403, name: "приказы", unread: 0, locked: true },
+      ],
+      voice: [
+        { id: 451, name: "Темный зал", users: 2, streaming: false },
+        { id: 452, name: "Бункер", users: 0, streaming: false },
+      ],
+      forum: [{ id: 491, name: "теории", posts: 19 }],
+    },
+    roles: [
+      { id: 1, name: "Dark Lord", color: "#ff6600", members: 1, perms: ["Все права"] },
+      { id: 2, name: "Enforcer", color: "#cc4400", members: 4, perms: ["Кик", "Бан"] },
+      { id: 3, name: "Dark Knight", color: "#882200", members: 31, perms: ["Голос"] },
+      { id: 4, name: "Shadow", color: "#441100", members: 120, perms: ["Читать"] },
+    ],
+    members: [
+      { id: 30, name: "DarkLord", role: "Dark Lord", roleColor: "#ff6600", color: "#ff6600", status: "dnd", avatar: "DL", game: "Diablo IV" },
+      { id: 31, name: "CrimsonFang", role: "Enforcer", roleColor: "#cc4400", color: "#cc4400", status: "online", avatar: "CF", game: "Dark Souls" },
+      { id: 32, name: "ObsidianBlade", role: "Dark Knight", roleColor: "#882200", color: "#882200", status: "offline", avatar: "OB", game: "" },
+    ],
+    messages: {
+      401: [
+        { id: 1, user: "DarkLord", avatar: "DL", color: "#ff6600", role: "Dark Lord", roleColor: "#ff6600", time: "23:00", text: "Завтра ночной рейд. Только проверенные участники. Подготовить снаряжение.", reactions: [{ emoji: "💀", count: 8 }] },
+        { id: 2, user: "CrimsonFang", avatar: "CF", color: "#cc4400", role: "Enforcer", roleColor: "#cc4400", time: "23:05", text: "Готов. Буду за 30 минут до старта", reactions: [] },
+      ],
+    },
+  },
+  5: {
+    channels: {
+      text: [
+        { id: 501, name: "альфа-чат", unread: 0 },
+        { id: 502, name: "тренировки", unread: 0 },
+        { id: 503, name: "результаты", unread: 0, pinned: true },
+      ],
+      voice: [
+        { id: 551, name: "Штаб Альфа", users: 0, streaming: false },
+        { id: 552, name: "Тренировка", users: 3, streaming: false },
+      ],
+      forum: [{ id: 591, name: "тактики", posts: 7 }],
+    },
+    roles: [
+      { id: 1, name: "Alpha Leader", color: "#aa00ff", members: 1, perms: ["Все права"] },
+      { id: 2, name: "Alpha Pro", color: "#8800cc", members: 5, perms: ["Управление"] },
+      { id: 3, name: "Alpha Member", color: "#660099", members: 43, perms: ["Голос", "Писать"] },
+    ],
+    members: [
+      { id: 40, name: "AlphaOne", role: "Alpha Leader", roleColor: "#aa00ff", color: "#aa00ff", status: "online", avatar: "A1", game: "CS2" },
+      { id: 41, name: "BetaForce", role: "Alpha Pro", roleColor: "#8800cc", color: "#8800cc", status: "online", avatar: "BF", game: "VALORANT" },
+      { id: 42, name: "GammaRay", role: "Alpha Member", roleColor: "#660099", color: "#9933cc", status: "away", avatar: "GR", game: "" },
+      { id: 43, name: "DeltaStrike", role: "Alpha Member", roleColor: "#660099", color: "#9933cc", status: "offline", avatar: "DS", game: "" },
+    ],
+    messages: {
+      501: [
+        { id: 1, user: "AlphaOne", avatar: "A1", color: "#aa00ff", role: "Alpha Leader", roleColor: "#aa00ff", time: "16:00", text: "Тренировка сегодня в 19:00. Фокус на дисциплине передвижения.", reactions: [{ emoji: "💪", count: 6 }] },
+        { id: 2, user: "BetaForce", avatar: "BF", color: "#8800cc", role: "Alpha Pro", roleColor: "#8800cc", time: "16:15", text: "Принято. Разминку начну заранее", reactions: [] },
+      ],
+    },
+  },
 };
 
-const INITIAL_MESSAGES = [
-  {
-    id: 1, user: "CyberWolf", avatar: "CW", color: "#00ff88", role: "Admin",
-    roleColor: "#00ff88", time: "19:42",
-    text: "Всем привет! Сегодня в 21:00 рейд на третью зону. Нужны все доступные бойцы.",
-    reactions: [{ emoji: "🔥", count: 12 }, { emoji: "⚔️", count: 8 }]
-  },
-  {
-    id: 2, user: "NeonShadow", avatar: "NS", color: "#ff00aa", role: "Mod",
-    roleColor: "#ff00aa", time: "19:44",
-    text: "Готов! Буду стримить для тех кто не успеет. Подключайтесь к Арена #1",
-    reactions: [{ emoji: "👀", count: 5 }]
-  },
-  {
-    id: 3, user: "PixelKnight", avatar: "PK", color: "#00aaff", role: "Боец",
-    roleColor: "#00aaff", time: "19:47",
-    text: "Тактика как в прошлый раз или меняем подход? У меня есть идея насчёт фланговой атаки",
-    reactions: []
-  },
-  {
-    id: 4, user: "GhostRunner", avatar: "GR", color: "#aa00ff", role: "Разведчик",
-    roleColor: "#aa00ff", time: "19:51",
-    text: "Флаг поддерживаю. Прошлый раз лобовая атака стоила нам 40 минут. Нужна скорость.",
-    reactions: [{ emoji: "💡", count: 9 }, { emoji: "✅", count: 14 }]
-  },
-  {
-    id: 5, user: "CyberWolf", avatar: "CW", color: "#00ff88", role: "Admin",
-    roleColor: "#00ff88", time: "19:53",
-    text: "Принято. GhostRunner ведёт разведку, PixelKnight командует флангом. Остальные — основная группа. Брифинг в 20:45.",
-    reactions: [{ emoji: "🎯", count: 17 }]
-  },
-];
-
-const MEMBERS = [
-  { id: 1, name: "CyberWolf", role: "Admin", roleColor: "#00ff88", status: "online", avatar: "CW", game: "Cyber Arena" },
-  { id: 2, name: "NeonShadow", role: "Mod", roleColor: "#ff00aa", status: "streaming", avatar: "NS", game: "🔴 В эфире" },
-  { id: 3, name: "PixelKnight", role: "Боец", roleColor: "#00aaff", status: "online", avatar: "PK", game: "Cyber Arena" },
-  { id: 4, name: "GhostRunner", role: "Разведчик", roleColor: "#aa00ff", status: "online", avatar: "GR", game: "Cyber Arena" },
-  { id: 5, name: "IronCore", role: "Боец", roleColor: "#00aaff", status: "away", avatar: "IC", game: "Away" },
-  { id: 6, name: "VoidHunter", role: "Рекрут", roleColor: "#6b7fa3", status: "online", avatar: "VH", game: "Lobby" },
-  { id: 7, name: "StarForge", role: "Рекрут", roleColor: "#6b7fa3", status: "offline", avatar: "SF", game: "" },
-  { id: 8, name: "NightCrawler", role: "Рекрут", roleColor: "#6b7fa3", status: "offline", avatar: "NC", game: "" },
-];
-
-const ROLES = [
-  { id: 1, name: "Admin", color: "#00ff88", members: 1, perms: ["Все права", "Управление сервером", "Бан/Кик"] },
-  { id: 2, name: "Mod", color: "#ff00aa", members: 2, perms: ["Управление каналами", "Удаление сообщений", "Тайм-аут"] },
-  { id: 3, name: "Боец", color: "#00aaff", members: 48, perms: ["Голосовой чат", "Стриминг", "Прикреплять файлы"] },
-  { id: 4, name: "Разведчик", color: "#aa00ff", members: 15, perms: ["Голосовой чат", "Стриминг", "Специальные каналы"] },
-  { id: 5, name: "Рекрут", color: "#6b7fa3", members: 234, perms: ["Чтение каналов", "Текстовый чат"] },
-];
-
 type Tab = "chat" | "streaming" | "users" | "roles" | "settings";
+type UserStatus = "online" | "away" | "dnd" | "invisible";
+
+const STATUS_META: Record<UserStatus, { label: string; color: string; dot: string }> = {
+  online: { label: "В сети", color: "#00ff88", dot: "status-online" },
+  away: { label: "Отошёл", color: "#ff6600", dot: "status-away" },
+  dnd: { label: "Не беспокоить", color: "#ff4444", dot: "status-dnd" },
+  invisible: { label: "Невидимый", color: "#6b7fa3", dot: "status-offline" },
+};
 
 export default function Index({ user, onLogout }: IndexProps) {
   const [activeServer, setActiveServer] = useState(1);
-  const [activeChannel, setActiveChannel] = useState(1);
+  const [activeChannel, setActiveChannel] = useState(101);
   const [activeTab, setActiveTab] = useState<Tab>("chat");
   const [inputValue, setInputValue] = useState("");
   const [expandText, setExpandText] = useState(true);
   const [expandVoice, setExpandVoice] = useState(true);
   const [expandForum, setExpandForum] = useState(false);
   const [streamActive, setStreamActive] = useState(false);
-  const [messages, setMessages] = useState(INITIAL_MESSAGES);
+  const [serverMessages, setServerMessages] = useState<Record<number, Record<number, Msg[]>>>(
+    Object.fromEntries(Object.entries(SERVER_DATA).map(([sid, data]) => [Number(sid), { ...data.messages }]))
+  );
   const [micMuted, setMicMuted] = useState(false);
   const [headphonesDeaf, setHeadphonesDeaf] = useState(false);
+  const [myStatus, setMyStatus] = useState<UserStatus>("online");
+  const [dndNotifications, setDndNotifications] = useState(true);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [showServerSettings, setShowServerSettings] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
   const [showCreateServer, setShowCreateServer] = useState(false);
   const [showChannelSettings, setShowChannelSettings] = useState(false);
   const [showStreamCapture, setShowStreamCapture] = useState(false);
   const [showDMPanel, setShowDMPanel] = useState(false);
-  const [profileMember, setProfileMember] = useState<typeof MEMBERS[0] | null>(null);
+  const [profileMember, setProfileMember] = useState<ServerMember | null>(null);
   const [servers, setServers] = useState(INITIAL_SERVERS);
 
   const server = servers.find(s => s.id === activeServer) || servers[0];
+  const sData = SERVER_DATA[activeServer] || SERVER_DATA[1];
+  const CHANNELS = sData.channels;
+  const MEMBERS = sData.members;
+  const ROLES = sData.roles;
+  const messages = serverMessages[activeServer]?.[activeChannel] || [];
   const channel = CHANNELS.text.find(c => c.id === activeChannel) || CHANNELS.text[0];
+
+  const switchServer = (id: number) => {
+    setActiveServer(id);
+    const firstCh = (SERVER_DATA[id] || SERVER_DATA[1]).channels.text[0];
+    setActiveChannel(firstCh?.id || 101);
+    setActiveTab("chat");
+  };
 
   const sendMessage = () => {
     if (!inputValue.trim()) return;
-    setMessages(prev => [...prev, {
-      id: prev.length + 1,
-      user: "Вы",
-      avatar: "ВЫ",
-      color: "#00ff88",
+    const newMsg: Msg = {
+      id: Date.now(),
+      user: user.username,
+      avatar: user.username.slice(0, 2).toUpperCase(),
+      color: user.avatar_color,
       role: "Admin",
-      roleColor: "#00ff88",
+      roleColor: user.avatar_color,
       time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
       text: inputValue,
-      reactions: []
-    }]);
+      reactions: [],
+    };
+    setServerMessages(prev => ({
+      ...prev,
+      [activeServer]: {
+        ...(prev[activeServer] || {}),
+        [activeChannel]: [...(prev[activeServer]?.[activeChannel] || []), newMsg],
+      },
+    }));
     setInputValue("");
   };
 
@@ -147,7 +309,7 @@ export default function Index({ user, onLogout }: IndexProps) {
       {showServerSettings && <ServerSettings server={server} onClose={() => setShowServerSettings(false)} />}
       {showUserSettings && <UserSettings user={user} onClose={() => setShowUserSettings(false)} onLogout={onLogout} />}
       {showCreateServer && <CreateServerModal onClose={() => setShowCreateServer(false)} onCreate={s => { const newId = servers.length + 1; setServers(prev => [...prev, { id: newId, ...s, members: 1, unread: 0 }]); setActiveServer(newId); }} />}
-      {showChannelSettings && <ChannelSettings channel={CHANNELS.text.find(c => c.id === activeChannel) || CHANNELS.text[0]} onClose={() => setShowChannelSettings(false)} />}
+      {showChannelSettings && <ChannelSettings channel={sData.channels.text.find(c => c.id === activeChannel) || sData.channels.text[0]} onClose={() => setShowChannelSettings(false)} />}
       {showStreamCapture && <StreamCapture onClose={() => setShowStreamCapture(false)} onStart={() => setStreamActive(true)} />}
       {showDMPanel && <DMPanel user={user} onClose={() => setShowDMPanel(false)} />}
       {profileMember && (
@@ -175,7 +337,7 @@ export default function Index({ user, onLogout }: IndexProps) {
         <div className="w-6 h-px mb-1" style={{ background: "rgba(0,255,136,0.2)" }} />
 
         {servers.map(srv => (
-          <div key={srv.id} className="relative group" onClick={() => setActiveServer(srv.id)}>
+          <div key={srv.id} className="relative group" onClick={() => switchServer(srv.id)}>
             <div
               className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-200"
               style={{
@@ -304,17 +466,67 @@ export default function Index({ user, onLogout }: IndexProps) {
         </div>
 
         {/* User footer */}
-        <div className="px-2 py-2" style={{ borderTop: "1px solid rgba(0,255,136,0.08)" }}>
-          <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: "rgba(0,255,136,0.05)" }}>
-            <button className="relative shrink-0" onClick={() => setShowUserSettings(true)} title="Настройки профиля">
-              <div className="w-7 h-7 rounded-full flex items-center justify-center hover:ring-2 transition-all" style={{ background: user.avatar_color + "33", border: `1px solid ${user.avatar_color}55`, color: user.avatar_color, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px", ringColor: user.avatar_color }}>
+        <div className="px-2 py-2 relative" style={{ borderTop: "1px solid rgba(0,255,136,0.08)" }}>
+          {/* Status menu */}
+          {statusMenuOpen && (
+            <div className="absolute bottom-full left-2 right-2 mb-2 rounded-xl overflow-hidden z-50 animate-fade-in"
+              style={{ background: "#0d1424", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 -8px 32px rgba(0,0,0,0.5)" }}>
+              <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "10px", color: "#4a5568", textTransform: "uppercase", letterSpacing: "1px", padding: "8px 12px 4px" }}>Статус</div>
+              {(["online", "away", "dnd", "invisible"] as UserStatus[]).map(s => (
+                <button key={s} onClick={() => { setMyStatus(s); setStatusMenuOpen(false); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 transition-colors text-left hover:bg-white hover:bg-opacity-5">
+                  <div className="w-3 h-3 rounded-full" style={{ background: STATUS_META[s].color, boxShadow: myStatus === s ? `0 0 6px ${STATUS_META[s].color}` : "none" }} />
+                  <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "13px", color: myStatus === s ? STATUS_META[s].color : "#e2e8f0" }}>{STATUS_META[s].label}</span>
+                  {myStatus === s && <Icon name="Check" size={12} style={{ color: STATUS_META[s].color, marginLeft: "auto" }} />}
+                </button>
+              ))}
+              {/* DND — mute notifications */}
+              {myStatus === "dnd" && (
+                <>
+                  <div className="h-px mx-3" style={{ background: "rgba(255,255,255,0.06)" }} />
+                  <button onClick={() => setDndNotifications(v => !v)}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 transition-colors text-left hover:bg-white hover:bg-opacity-5">
+                    <Icon name={dndNotifications ? "BellOff" : "Bell"} size={14} style={{ color: dndNotifications ? "#ff4444" : "#00ff88" }} />
+                    <div>
+                      <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "13px", color: "#e2e8f0" }}>
+                        {dndNotifications ? "Уведомления выключены" : "Уведомления включены"}
+                      </div>
+                      <div style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "10px", color: "#6b7fa3" }}>
+                        {dndNotifications ? "Нажми чтобы включить" : "Нажми чтобы заглушить"}
+                      </div>
+                    </div>
+                    <div className="ml-auto w-8 h-4 rounded-full relative shrink-0" style={{ background: dndNotifications ? "rgba(255,68,68,0.3)" : "rgba(0,255,136,0.3)" }}>
+                      <div className="absolute w-2.5 h-2.5 rounded-full top-[3px] transition-all" style={{ background: "#fff", left: dndNotifications ? "2px" : "14px" }} />
+                    </div>
+                  </button>
+                </>
+              )}
+              <div className="h-px mx-3" style={{ background: "rgba(255,255,255,0.06)" }} />
+              <button onClick={() => { setShowUserSettings(true); setStatusMenuOpen(false); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 transition-colors text-left hover:bg-white hover:bg-opacity-5">
+                <Icon name="Settings" size={13} style={{ color: "#6b7fa3" }} />
+                <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", color: "#6b7fa3" }}>Открыть настройки</span>
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: `${STATUS_META[myStatus].color}08` }}>
+            {/* Avatar — click opens status menu */}
+            <button className="relative shrink-0" onClick={() => setStatusMenuOpen(v => !v)} title="Сменить статус">
+              <div className="w-7 h-7 rounded-full flex items-center justify-center transition-all hover:ring-2"
+                style={{ background: user.avatar_color + "33", border: `1px solid ${user.avatar_color}55`, color: user.avatar_color, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
                 {user.username.slice(0, 2).toUpperCase()}
               </div>
-              <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 ${micMuted ? "status-away" : "status-online"}`} style={{ borderColor: "var(--dark-panel)" }} />
+              <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 ${STATUS_META[myStatus].dot}`} style={{ borderColor: "var(--dark-panel)" }} />
             </button>
-            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setShowUserSettings(true)}>
+            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setStatusMenuOpen(v => !v)}>
               <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", color: user.avatar_color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.username}</div>
-              <div style={{ fontSize: "10px", color: micMuted ? "#ff6600" : "#6b7fa3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{micMuted ? "Мик выключен" : headphonesDeaf ? "Заглушён" : "Online"}</div>
+              <div className="flex items-center gap-1">
+                {myStatus === "dnd" && dndNotifications && <Icon name="BellOff" size={9} style={{ color: "#ff4444" }} />}
+                <div style={{ fontSize: "10px", color: STATUS_META[myStatus].color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {STATUS_META[myStatus].label}{micMuted ? " · Мик выкл" : ""}{headphonesDeaf ? " · Глушилка" : ""}
+                </div>
+              </div>
             </div>
             <div className="flex gap-1">
               <button onClick={() => setMicMuted(v => !v)} title={micMuted ? "Включить микрофон" : "Выключить микрофон"}
@@ -327,7 +539,7 @@ export default function Index({ user, onLogout }: IndexProps) {
                 style={{ background: headphonesDeaf ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.05)" }}>
                 <Icon name={headphonesDeaf ? "VolumeX" : "Headphones"} size={12} style={{ color: headphonesDeaf ? "#ff4444" : "#6b7fa3" }} />
               </button>
-              <button onClick={() => setShowUserSettings(true)} title="Настройки"
+              <button onClick={() => { setShowUserSettings(true); setStatusMenuOpen(false); }} title="Настройки"
                 className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 transition-opacity"
                 style={{ background: "rgba(255,255,255,0.05)" }}>
                 <Icon name="Settings" size={12} style={{ color: "#6b7fa3" }} />
@@ -691,45 +903,68 @@ export default function Index({ user, onLogout }: IndexProps) {
 
       {/* Members sidebar */}
       {activeTab === "chat" && (
-        <div className="w-[200px] shrink-0 overflow-y-auto py-3" style={{ background: "var(--dark-panel)", borderLeft: "1px solid rgba(0,255,136,0.08)" }}>
+        <div className="w-[210px] shrink-0 overflow-y-auto py-3" style={{ background: "var(--dark-panel)", borderLeft: "1px solid rgba(0,255,136,0.08)" }}>
           <div className="px-3">
-            <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "10px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "8px" }}>
-              Онлайн — {MEMBERS.filter(m => m.status !== "offline").length}
-            </div>
-            {MEMBERS.filter(m => m.status !== "offline").map(member => (
-              <div key={member.id} onClick={() => setProfileMember(member)}
-                className="flex items-center gap-2 py-1.5 px-2 rounded-xl cursor-pointer transition-all group" style={{ marginBottom: "2px" }}
-                onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.05)")}
-                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-              >
-                <div className="relative shrink-0">
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: member.color + "22", color: member.color, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
-                    {member.avatar}
+            {/* Group by role */}
+            {ROLES.map(role => {
+              const roleMembers = MEMBERS.filter(m => m.role === role.name && m.status !== "offline");
+              if (roleMembers.length === 0) return null;
+              return (
+                <div key={role.id} className="mb-3">
+                  <div className="flex items-center gap-1.5 mb-1.5 px-1">
+                    <div className="w-2 h-2 rounded-full" style={{ background: role.color }} />
+                    <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px", color: role.color, textTransform: "uppercase", letterSpacing: "0.8px" }}>
+                      {role.name} — {roleMembers.length}
+                    </span>
                   </div>
-                  <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 status-${member.status}`} style={{ borderColor: "var(--dark-panel)" }} />
+                  {roleMembers.map(member => (
+                    <div key={member.id} onClick={() => setProfileMember(member)}
+                      className="flex items-center gap-2 py-1.5 px-2 rounded-xl cursor-pointer transition-all" style={{ marginBottom: "1px" }}
+                      onMouseEnter={e => (e.currentTarget.style.background = role.color + "10")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                    >
+                      <div className="relative shrink-0">
+                        <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: member.color + "22", color: member.color, border: `1px solid ${member.color}33`, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
+                          {member.avatar}
+                        </div>
+                        <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 status-${member.status}`} style={{ borderColor: "var(--dark-panel)" }} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px", color: member.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{member.name}</div>
+                        {member.status === "streaming"
+                          ? <div style={{ fontFamily: "Rajdhani, sans-serif", fontSize: "9px", color: "#ff00aa" }}>🔴 В эфире</div>
+                          : member.game && <div style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "9px", color: "#6b7fa3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{member.game}</div>
+                        }
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div className="min-w-0 flex-1">
-                  <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "12px", color: "#c8d6e8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{member.name}</div>
-                  {member.status === "streaming" && <div style={{ fontFamily: "Rajdhani, sans-serif", fontSize: "10px", color: "#ff00aa" }}>🔴 В эфире</div>}
-                </div>
-              </div>
-            ))}
+              );
+            })}
 
-            <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "10px", color: "#4a5568", textTransform: "uppercase", letterSpacing: "1px", marginTop: "12px", marginBottom: "8px" }}>
-              Офлайн — {MEMBERS.filter(m => m.status === "offline").length}
-            </div>
-            {MEMBERS.filter(m => m.status === "offline").map(member => (
-              <div key={member.id} onClick={() => setProfileMember(member)}
-                className="flex items-center gap-2 py-1.5 px-2 rounded-xl cursor-pointer transition-all" style={{ marginBottom: "2px", opacity: 0.45 }}
-                onMouseEnter={e => (e.currentTarget.style.opacity = "0.7")}
-                onMouseLeave={e => (e.currentTarget.style.opacity = "0.45")}
-              >
-                <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: "#1a2030", color: "#4a5568", fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
-                  {member.avatar}
+            {/* Offline */}
+            {MEMBERS.filter(m => m.status === "offline").length > 0 && (
+              <div className="mb-2">
+                <div className="flex items-center gap-1.5 mb-1.5 px-1">
+                  <div className="w-2 h-2 rounded-full" style={{ background: "#4a5568" }} />
+                  <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px", color: "#4a5568", textTransform: "uppercase", letterSpacing: "0.8px" }}>
+                    Офлайн — {MEMBERS.filter(m => m.status === "offline").length}
+                  </span>
                 </div>
-                <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "12px", color: "#4a5568", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{member.name}</div>
+                {MEMBERS.filter(m => m.status === "offline").map(member => (
+                  <div key={member.id} onClick={() => setProfileMember(member)}
+                    className="flex items-center gap-2 py-1.5 px-2 rounded-xl cursor-pointer transition-all" style={{ marginBottom: "1px", opacity: 0.4 }}
+                    onMouseEnter={e => (e.currentTarget.style.opacity = "0.65")}
+                    onMouseLeave={e => (e.currentTarget.style.opacity = "0.4")}
+                  >
+                    <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: "#1a2030", color: "#4a5568", fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
+                      {member.avatar}
+                    </div>
+                    <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "12px", color: "#4a5568", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{member.name}</div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         </div>
       )}

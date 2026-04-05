@@ -165,6 +165,29 @@
     background-color: #374151;
   }
 
+  .status-dnd {
+    background-color: #ff4444;
+    box-shadow: 0 0 6px rgba(255, 68, 68, 0.6);
+    position: relative;
+  }
+
+  .status-dnd::after {
+    content: "";
+    position: absolute;
+    width: 60%;
+    height: 2px;
+    background: var(--dark-panel);
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: 1px;
+  }
+
+  .status-invisible {
+    background-color: #374151;
+    border: 1px solid #6b7fa3;
+  }
+
   .grid-bg {
     background-image:
       linear-gradient(rgba(0, 255, 136, 0.03) 1px, transparent 1px),
