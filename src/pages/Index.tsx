@@ -5,6 +5,8 @@ import UserSettings from "@/components/UserSettings";
 import CreateServerModal from "@/components/CreateServerModal";
 import ChannelSettings from "@/components/ChannelSettings";
 import StreamCapture from "@/components/StreamCapture";
+import DMPanel from "@/components/DMPanel";
+import ProfileModal from "@/components/ProfileModal";
 
 interface User {
   id: number;
@@ -117,6 +119,8 @@ export default function Index({ user, onLogout }: IndexProps) {
   const [showCreateServer, setShowCreateServer] = useState(false);
   const [showChannelSettings, setShowChannelSettings] = useState(false);
   const [showStreamCapture, setShowStreamCapture] = useState(false);
+  const [showDMPanel, setShowDMPanel] = useState(false);
+  const [profileMember, setProfileMember] = useState<typeof MEMBERS[0] | null>(null);
   const [servers, setServers] = useState(INITIAL_SERVERS);
 
   const server = servers.find(s => s.id === activeServer) || servers[0];
@@ -145,11 +149,28 @@ export default function Index({ user, onLogout }: IndexProps) {
       {showCreateServer && <CreateServerModal onClose={() => setShowCreateServer(false)} onCreate={s => { const newId = servers.length + 1; setServers(prev => [...prev, { id: newId, ...s, members: 1, unread: 0 }]); setActiveServer(newId); }} />}
       {showChannelSettings && <ChannelSettings channel={CHANNELS.text.find(c => c.id === activeChannel) || CHANNELS.text[0]} onClose={() => setShowChannelSettings(false)} />}
       {showStreamCapture && <StreamCapture onClose={() => setShowStreamCapture(false)} onStart={() => setStreamActive(true)} />}
+      {showDMPanel && <DMPanel user={user} onClose={() => setShowDMPanel(false)} />}
+      {profileMember && (
+        <ProfileModal
+          member={{ id: profileMember.id, name: profileMember.name, color: profileMember.color, role: profileMember.role, roleColor: profileMember.roleColor, status: profileMember.status, avatar: profileMember.avatar, game: profileMember.game, mutual: 3 }}
+          onClose={() => setProfileMember(null)}
+          onMessage={() => { setShowDMPanel(true); setProfileMember(null); }}
+        />
+      )}
 
       {/* Servers sidebar */}
       <div className="flex flex-col items-center py-4 gap-2 w-[68px] shrink-0" style={{ background: "#060a11", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
         <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-2 cursor-pointer" style={{ background: "linear-gradient(135deg, #00ff88, #00aaff)" }}>
           <span style={{ fontFamily: "Orbitron, sans-serif", fontSize: "11px", fontWeight: 900, color: "#060a11" }}>NX</span>
+        </div>
+        {/* DM button */}
+        <div onClick={() => setShowDMPanel(true)} title="Личные сообщения и друзья"
+          className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer hover:opacity-90 transition-all hover:scale-105 group relative"
+          style={{ background: "#0d1424", border: "1px solid rgba(0,170,255,0.3)" }}>
+          <Icon name="MessageCircle" size={16} style={{ color: "#00aaff" }} />
+          <div className="absolute left-12 rounded-lg px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 whitespace-nowrap" style={{ background: "#111a2e", color: "#e2e8f0", border: "1px solid rgba(0,170,255,0.2)", fontSize: "12px", fontFamily: "Rajdhani, sans-serif", fontWeight: 600 }}>
+            Личные сообщения
+          </div>
         </div>
         <div className="w-6 h-px mb-1" style={{ background: "rgba(0,255,136,0.2)" }} />
 
@@ -360,7 +381,7 @@ export default function Index({ user, onLogout }: IndexProps) {
                     onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.02)")}
                     onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                   >
-                    <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: msg.color + "22", border: `1px solid ${msg.color}44`, color: msg.color, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "11px" }}>
+                    <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 cursor-pointer hover:scale-110 transition-all" onClick={() => { const m = MEMBERS.find(mb => mb.name === msg.user); if (m) setProfileMember(m); }} style={{ background: msg.color + "22", border: `1px solid ${msg.color}44`, color: msg.color, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "11px" }}>
                       {msg.avatar}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -676,8 +697,9 @@ export default function Index({ user, onLogout }: IndexProps) {
               Онлайн — {MEMBERS.filter(m => m.status !== "offline").length}
             </div>
             {MEMBERS.filter(m => m.status !== "offline").map(member => (
-              <div key={member.id} className="flex items-center gap-2 py-1.5 px-2 rounded-xl cursor-pointer transition-all" style={{ marginBottom: "2px" }}
-                onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.04)")}
+              <div key={member.id} onClick={() => setProfileMember(member)}
+                className="flex items-center gap-2 py-1.5 px-2 rounded-xl cursor-pointer transition-all group" style={{ marginBottom: "2px" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.05)")}
                 onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
               >
                 <div className="relative shrink-0">
@@ -697,7 +719,11 @@ export default function Index({ user, onLogout }: IndexProps) {
               Офлайн — {MEMBERS.filter(m => m.status === "offline").length}
             </div>
             {MEMBERS.filter(m => m.status === "offline").map(member => (
-              <div key={member.id} className="flex items-center gap-2 py-1.5 px-2 rounded-xl" style={{ marginBottom: "2px", opacity: 0.45 }}>
+              <div key={member.id} onClick={() => setProfileMember(member)}
+                className="flex items-center gap-2 py-1.5 px-2 rounded-xl cursor-pointer transition-all" style={{ marginBottom: "2px", opacity: 0.45 }}
+                onMouseEnter={e => (e.currentTarget.style.opacity = "0.7")}
+                onMouseLeave={e => (e.currentTarget.style.opacity = "0.45")}
+              >
                 <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: "#1a2030", color: "#4a5568", fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
                   {member.avatar}
                 </div>
