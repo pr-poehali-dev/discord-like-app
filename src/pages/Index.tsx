@@ -7,6 +7,7 @@ import ChannelSettings from "@/components/ChannelSettings";
 import StreamCapture from "@/components/StreamCapture";
 import DMView from "@/components/DMView";
 import ProfileModal from "@/components/ProfileModal";
+import UserAvatar from "@/components/UserAvatar";
 
 interface User {
   id: number;
@@ -18,7 +19,9 @@ interface User {
 
 interface IndexProps {
   user: User;
+  avatarImg?: string | null;
   onLogout: () => void;
+  onAvatarChange?: (img: string | null, color?: string) => void;
 }
 
 const INITIAL_SERVERS = [
@@ -240,7 +243,7 @@ const STATUS_META: Record<UserStatus, { label: string; color: string; dot: strin
   invisible: { label: "Невидимый", color: "#6b7fa3", dot: "status-offline" },
 };
 
-export default function Index({ user, onLogout }: IndexProps) {
+export default function Index({ user, avatarImg, onLogout, onAvatarChange }: IndexProps) {
   const [activeServer, setActiveServer] = useState(1);
   const [activeChannel, setActiveChannel] = useState(101);
   const [activeTab, setActiveTab] = useState<Tab>("chat");
@@ -307,7 +310,7 @@ export default function Index({ user, onLogout }: IndexProps) {
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--dark-bg)", fontFamily: "IBM Plex Sans, sans-serif" }}>
       {showServerSettings && <ServerSettings server={server} onClose={() => setShowServerSettings(false)} />}
-      {showUserSettings && <UserSettings user={user} onClose={() => setShowUserSettings(false)} onLogout={onLogout} />}
+      {showUserSettings && <UserSettings user={user} avatarImg={avatarImg} onAvatarChange={onAvatarChange} onClose={() => setShowUserSettings(false)} onLogout={onLogout} />}
       {showCreateServer && <CreateServerModal onClose={() => setShowCreateServer(false)} onCreate={s => { const newId = servers.length + 1; setServers(prev => [...prev, { id: newId, ...s, members: 1, unread: 0 }]); setActiveServer(newId); }} />}
       {showChannelSettings && <ChannelSettings channel={sData.channels.text.find(c => c.id === activeChannel) || sData.channels.text[0]} onClose={() => setShowChannelSettings(false)} />}
       {showStreamCapture && <StreamCapture onClose={() => setShowStreamCapture(false)} onStart={() => setStreamActive(true)} />}
@@ -372,6 +375,7 @@ export default function Index({ user, onLogout }: IndexProps) {
       {dmMode && (
         <DMView
           user={user}
+          avatarImg={avatarImg}
           onLogout={onLogout}
           onOpenSettings={() => setShowUserSettings(true)}
           micMuted={micMuted}
@@ -530,11 +534,14 @@ export default function Index({ user, onLogout }: IndexProps) {
           <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: `${STATUS_META[myStatus].color}08` }}>
             {/* Avatar — click opens status menu */}
             <button className="relative shrink-0" onClick={() => setStatusMenuOpen(v => !v)} title="Сменить статус">
-              <div className="w-7 h-7 rounded-full flex items-center justify-center transition-all hover:ring-2"
-                style={{ background: user.avatar_color + "33", border: `1px solid ${user.avatar_color}55`, color: user.avatar_color, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
-                {user.username.slice(0, 2).toUpperCase()}
-              </div>
-              <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 ${STATUS_META[myStatus].dot}`} style={{ borderColor: "var(--dark-panel)" }} />
+              <UserAvatar
+                username={user.username}
+                color={user.avatar_color}
+                avatarImg={avatarImg}
+                size={28}
+                showStatus
+                status={myStatus}
+              />
             </button>
             <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setStatusMenuOpen(v => !v)}>
               <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", color: user.avatar_color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.username}</div>
@@ -610,9 +617,14 @@ export default function Index({ user, onLogout }: IndexProps) {
                     onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.02)")}
                     onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                   >
-                    <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 cursor-pointer hover:scale-110 transition-all" onClick={() => { const m = MEMBERS.find(mb => mb.name === msg.user); if (m) setProfileMember(m); }} style={{ background: msg.color + "22", border: `1px solid ${msg.color}44`, color: msg.color, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "11px" }}>
-                      {msg.avatar}
-                    </div>
+                    <UserAvatar
+                      username={msg.user}
+                      color={msg.color}
+                      avatarImg={msg.user === user.username ? avatarImg : undefined}
+                      size={36}
+                      onClick={() => { const m = MEMBERS.find(mb => mb.name === msg.user); if (m) setProfileMember(m); }}
+                      className="hover:scale-110 transition-all"
+                    />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "14px", color: msg.color }}>{msg.user}</span>

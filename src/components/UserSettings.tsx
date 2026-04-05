@@ -1,8 +1,11 @@
 import { useState, useRef } from "react";
 import Icon from "@/components/ui/icon";
+import UserAvatar from "@/components/UserAvatar";
 
 interface UserSettingsProps {
   user: { id: number; username: string; email: string; avatar_color: string; status: string };
+  avatarImg?: string | null;
+  onAvatarChange?: (img: string | null, color?: string) => void;
   onClose: () => void;
   onLogout: () => void;
 }
@@ -86,7 +89,7 @@ const KEYBINDS = [
 const AUDIO_DEVICES_IN = ["Микрофон (встроенный)", "USB Headset Mic", "Blue Yeti", "AirPods Pro"];
 const AUDIO_DEVICES_OUT = ["Динамики (встроенные)", "USB Headphones", "Sony WH-1000XM5", "AirPods Pro"];
 
-export default function UserSettings({ user, onClose, onLogout }: UserSettingsProps) {
+export default function UserSettings({ user, avatarImg: avatarImgProp, onAvatarChange, onClose, onLogout }: UserSettingsProps) {
   const [section, setSection] = useState("profile");
   const rF = { fontFamily: "Rajdhani, sans-serif" };
   const iF = { fontFamily: "IBM Plex Sans, sans-serif" };
@@ -94,7 +97,7 @@ export default function UserSettings({ user, onClose, onLogout }: UserSettingsPr
   // Profile
   const [username, setUsername] = useState(user.username);
   const [avatarColor, setAvatarColor] = useState(user.avatar_color);
-  const [avatarImg, setAvatarImg] = useState<string | null>(null);
+  const [avatarImg, setAvatarImg] = useState<string | null>(avatarImgProp ?? null);
   const [bannerImg, setBannerImg] = useState<string | null>(null);
   const [bannerColor, setBannerColor] = useState("#0d1424");
   const [userStatus, setUserStatus] = useState("online");
@@ -175,10 +178,26 @@ export default function UserSettings({ user, onClose, onLogout }: UserSettingsPr
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      if (type === "avatar") setAvatarImg(ev.target?.result as string);
-      else setBannerImg(ev.target?.result as string);
+      const result = ev.target?.result as string;
+      if (type === "avatar") {
+        setAvatarImg(result);
+        onAvatarChange?.(result, avatarColor);
+      } else {
+        setBannerImg(result);
+      }
     };
     reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  const removeAvatar = () => {
+    setAvatarImg(null);
+    onAvatarChange?.(null, avatarColor);
+  };
+
+  const handleColorChange = (c: string) => {
+    setAvatarColor(c);
+    onAvatarChange?.(avatarImg, c);
   };
 
   const Toggle = ({ value, onChange, color = "#00ff88" }: { value: boolean; onChange: () => void; color?: string }) => (
@@ -312,13 +331,7 @@ export default function UserSettings({ user, onClose, onLogout }: UserSettingsPr
                 {/* Avatar */}
                 <div className="flex items-end gap-4">
                   <div className="relative cursor-pointer group" onClick={() => avatarInputRef.current?.click()}>
-                    <div className="w-20 h-20 rounded-full flex items-center justify-center overflow-hidden"
-                      style={{ background: avatarImg ? "transparent" : avatarColor + "33", border: `3px solid ${avatarColor}` }}>
-                      {avatarImg
-                        ? <img src={avatarImg} alt="avatar" className="w-full h-full object-cover" />
-                        : <span style={{ ...rF, fontWeight: 900, fontSize: "24px", color: avatarColor }}>{username.slice(0, 2).toUpperCase()}</span>
-                      }
-                    </div>
+                    <UserAvatar username={username} color={avatarColor} avatarImg={avatarImg} size={80} />
                     <div className="absolute inset-0 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: "rgba(0,0,0,0.6)" }}>
                       <Icon name="Camera" size={18} style={{ color: "#fff" }} />
                     </div>
@@ -336,7 +349,7 @@ export default function UserSettings({ user, onClose, onLogout }: UserSettingsPr
                         <Icon name="Upload" size={12} /> Загрузить фото/GIF
                       </button>
                       {avatarImg && (
-                        <button onClick={() => setAvatarImg(null)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all hover:opacity-80"
+                        <button onClick={removeAvatar} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all hover:opacity-80"
                           style={{ background: "rgba(255,0,0,0.08)", color: "#ff4444", border: "1px solid rgba(255,0,0,0.2)", ...rF, fontWeight: 600 }}>
                           <Icon name="Trash2" size={12} /> Удалить
                         </button>
@@ -352,11 +365,11 @@ export default function UserSettings({ user, onClose, onLogout }: UserSettingsPr
                   <SectionLabel>Цвет аватара</SectionLabel>
                   <div className="flex gap-2 flex-wrap">
                     {AVATAR_COLORS.map(c => (
-                      <button key={c} onClick={() => setAvatarColor(c)} className="w-8 h-8 rounded-full transition-all hover:scale-110"
+                      <button key={c} onClick={() => handleColorChange(c)} className="w-8 h-8 rounded-full transition-all hover:scale-110"
                         style={{ background: c, border: avatarColor === c ? "3px solid white" : "3px solid transparent", boxShadow: avatarColor === c ? `0 0 10px ${c}` : "none" }} />
                     ))}
                     <div className="relative">
-                      <input type="color" value={avatarColor} onChange={e => setAvatarColor(e.target.value)}
+                      <input type="color" value={avatarColor} onChange={e => handleColorChange(e.target.value)}
                         className="w-8 h-8 rounded-full cursor-pointer border-0 opacity-0 absolute inset-0" />
                       <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.08)", border: "2px dashed rgba(255,255,255,0.3)" }}>
                         <Icon name="Plus" size={14} style={{ color: "#6b7fa3" }} />

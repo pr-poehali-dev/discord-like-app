@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import Icon from "@/components/ui/icon";
 import ProfileModal from "@/components/ProfileModal";
+import UserAvatar from "@/components/UserAvatar";
 
 interface User {
   id: number;
@@ -12,6 +13,7 @@ interface User {
 
 interface DMViewProps {
   user: User;
+  avatarImg?: string | null;
   onLogout: () => void;
   onOpenSettings: () => void;
   micMuted: boolean;
@@ -79,7 +81,7 @@ const INIT_MSGS: Record<number, Msg[]> = {
 type Section = "friends" | "chat" | "pending" | "blocked";
 
 export default function DMView({
-  user, onLogout, onOpenSettings, micMuted, headphonesDeaf,
+  user, avatarImg, onLogout, onOpenSettings, micMuted, headphonesDeaf,
   onToggleMic, onToggleDeaf, myStatusDot, myStatusColor, myStatusLabel, onOpenStatusMenu,
 }: DMViewProps) {
   const rF = { fontFamily: "Rajdhani, sans-serif" };
@@ -317,10 +319,14 @@ export default function DMView({
         <div className="px-2 py-2 mt-auto" style={{ borderTop: "1px solid rgba(0,170,255,0.08)" }}>
           <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: `${myStatusColor}08` }}>
             <button className="relative shrink-0" onClick={onOpenStatusMenu}>
-              <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: user.avatar_color + "33", border: `1px solid ${user.avatar_color}55`, color: user.avatar_color, ...rF, fontWeight: 700, fontSize: "10px" }}>
-                {user.username.slice(0, 2).toUpperCase()}
-              </div>
-              <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 ${myStatusDot}`} style={{ borderColor: "var(--dark-panel)" }} />
+              <UserAvatar
+                username={user.username}
+                color={user.avatar_color}
+                avatarImg={avatarImg}
+                size={28}
+                showStatus
+                status={myStatusDot.replace("status-", "")}
+              />
             </button>
             <div className="flex-1 min-w-0 cursor-pointer" onClick={onOpenStatusMenu}>
               <div style={{ ...rF, fontWeight: 600, fontSize: "13px", color: user.avatar_color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.username}</div>
@@ -484,9 +490,7 @@ export default function DMView({
             <div className="flex-1 overflow-y-auto px-5 py-5 space-y-3" style={{ background: "var(--dark-bg)" }}>
               {/* Channel intro */}
               <div className="flex flex-col items-center mb-8 gap-3">
-                <div className="w-20 h-20 rounded-full flex items-center justify-center" style={{ background: activeFriend.color + "22", color: activeFriend.color, border: `3px solid ${activeFriend.color}44`, boxShadow: `0 0 30px ${activeFriend.color}22`, ...rF, fontWeight: 900, fontSize: "24px" }}>
-                  {activeFriend.avatar}
-                </div>
+                <UserAvatar username={activeFriend.name} color={activeFriend.color} size={80} />
                 <div style={{ ...rF, fontWeight: 900, fontSize: "22px", color: activeFriend.color }}>{activeFriend.name}</div>
                 <div style={{ ...iF, fontSize: "13px", color: "#6b7fa3" }}>Начало личной переписки с {activeFriend.name}</div>
                 <div className="flex gap-2">
@@ -504,10 +508,7 @@ export default function DMView({
               {(msgs[activeDM!] || []).map(msg => (
                 <div key={msg.id} className={`flex items-end gap-2 ${msg.from === "me" ? "justify-end" : "justify-start"}`}>
                   {msg.from === "them" && (
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
-                      style={{ background: activeFriend.color + "22", color: activeFriend.color, ...rF, fontWeight: 700, fontSize: "9px" }}>
-                      {activeFriend.avatar}
-                    </div>
+                    <UserAvatar username={activeFriend.name} color={activeFriend.color} size={28} />
                   )}
                   {msg.type === "call" || msg.type === "vcall" ? (
                     <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl"
@@ -533,10 +534,7 @@ export default function DMView({
                     </div>
                   )}
                   {msg.from === "me" && (
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
-                      style={{ background: user.avatar_color + "22", color: user.avatar_color, ...rF, fontWeight: 700, fontSize: "9px" }}>
-                      {user.username.slice(0, 2).toUpperCase()}
-                    </div>
+                    <UserAvatar username={user.username} color={user.avatar_color} avatarImg={avatarImg} size={28} />
                   )}
                 </div>
               ))}
