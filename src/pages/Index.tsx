@@ -2,6 +2,9 @@ import { useState } from "react";
 import Icon from "@/components/ui/icon";
 import ServerSettings from "@/components/ServerSettings";
 import UserSettings from "@/components/UserSettings";
+import CreateServerModal from "@/components/CreateServerModal";
+import ChannelSettings from "@/components/ChannelSettings";
+import StreamCapture from "@/components/StreamCapture";
 
 interface User {
   id: number;
@@ -16,7 +19,7 @@ interface IndexProps {
   onLogout: () => void;
 }
 
-const SERVERS = [
+const INITIAL_SERVERS = [
   { id: 1, name: "NEXUS", abbr: "NX", color: "#00ff88", members: 1247, unread: 3 },
   { id: 2, name: "VOID SQUAD", abbr: "VS", color: "#ff00aa", members: 834, unread: 12 },
   { id: 3, name: "CYBER GUILD", abbr: "CG", color: "#00aaff", members: 2103, unread: 0 },
@@ -111,8 +114,12 @@ export default function Index({ user, onLogout }: IndexProps) {
   const [headphonesDeaf, setHeadphonesDeaf] = useState(false);
   const [showServerSettings, setShowServerSettings] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
+  const [showCreateServer, setShowCreateServer] = useState(false);
+  const [showChannelSettings, setShowChannelSettings] = useState(false);
+  const [showStreamCapture, setShowStreamCapture] = useState(false);
+  const [servers, setServers] = useState(INITIAL_SERVERS);
 
-  const server = SERVERS.find(s => s.id === activeServer)!;
+  const server = servers.find(s => s.id === activeServer) || servers[0];
   const channel = CHANNELS.text.find(c => c.id === activeChannel) || CHANNELS.text[0];
 
   const sendMessage = () => {
@@ -135,6 +142,9 @@ export default function Index({ user, onLogout }: IndexProps) {
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--dark-bg)", fontFamily: "IBM Plex Sans, sans-serif" }}>
       {showServerSettings && <ServerSettings server={server} onClose={() => setShowServerSettings(false)} />}
       {showUserSettings && <UserSettings user={user} onClose={() => setShowUserSettings(false)} onLogout={onLogout} />}
+      {showCreateServer && <CreateServerModal onClose={() => setShowCreateServer(false)} onCreate={s => { const newId = servers.length + 1; setServers(prev => [...prev, { id: newId, ...s, members: 1, unread: 0 }]); setActiveServer(newId); }} />}
+      {showChannelSettings && <ChannelSettings channel={CHANNELS.text.find(c => c.id === activeChannel) || CHANNELS.text[0]} onClose={() => setShowChannelSettings(false)} />}
+      {showStreamCapture && <StreamCapture onClose={() => setShowStreamCapture(false)} onStart={() => setStreamActive(true)} />}
 
       {/* Servers sidebar */}
       <div className="flex flex-col items-center py-4 gap-2 w-[68px] shrink-0" style={{ background: "#060a11", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
@@ -143,7 +153,7 @@ export default function Index({ user, onLogout }: IndexProps) {
         </div>
         <div className="w-6 h-px mb-1" style={{ background: "rgba(0,255,136,0.2)" }} />
 
-        {SERVERS.map(srv => (
+        {servers.map(srv => (
           <div key={srv.id} className="relative group" onClick={() => setActiveServer(srv.id)}>
             <div
               className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-200"
@@ -170,7 +180,7 @@ export default function Index({ user, onLogout }: IndexProps) {
         ))}
 
         <div className="mt-auto">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity" style={{ background: "#0d1424", border: "1px dashed rgba(0,255,136,0.3)" }}>
+          <div onClick={() => setShowCreateServer(true)} className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer hover:opacity-80 hover:scale-105 transition-all" style={{ background: "#0d1424", border: "1px dashed rgba(0,255,136,0.3)" }} title="Создать сервер">
             <Icon name="Plus" size={16} style={{ color: "#00ff88" }} />
           </div>
         </div>
@@ -320,10 +330,15 @@ export default function Index({ user, onLogout }: IndexProps) {
             {activeTab === "chat" && <span className="text-sm" style={{ color: "#6b7fa3" }}>Тактические обсуждения</span>}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setActiveTab("streaming")} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all duration-200 hover:opacity-90" style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", background: streamActive ? "rgba(255,0,170,0.2)" : "rgba(0,255,136,0.1)", color: streamActive ? "#ff00aa" : "#00ff88", border: `1px solid ${streamActive ? "#ff00aa44" : "#00ff8844"}` }}>
-              <Icon name={streamActive ? "MonitorOff" : "Monitor"} size={14} />
-              {streamActive ? "Стоп" : "Стримить"}
+            <button onClick={() => setShowStreamCapture(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all duration-200 hover:opacity-90" style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", background: streamActive ? "rgba(255,0,170,0.2)" : "rgba(0,255,136,0.1)", color: streamActive ? "#ff00aa" : "#00ff88", border: `1px solid ${streamActive ? "#ff00aa44" : "#00ff8844"}` }}>
+              <Icon name={streamActive ? "MonitorOff" : "MonitorPlay"} size={14} />
+              {streamActive ? "В эфире" : "Стримить"}
             </button>
+            {activeTab === "chat" && (
+              <button onClick={() => setShowChannelSettings(true)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70 transition-opacity" title="Настройки канала" style={{ background: "rgba(255,255,255,0.05)" }}>
+                <Icon name="Settings" size={15} style={{ color: "#6b7fa3" }} />
+              </button>
+            )}
             <button className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(255,255,255,0.05)" }}>
               <Icon name="Search" size={15} style={{ color: "#6b7fa3" }} />
             </button>
