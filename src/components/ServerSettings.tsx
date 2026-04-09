@@ -35,7 +35,7 @@ const MOCK_MEMBERS = [
 const MOCK_BANS = [
   { id: 1, name: "DarkSpammer", reason: "Спам и флуд", date: "12.03.2025", by: "CyberWolf" },
   { id: 2, name: "ToxicPlayer", reason: "Токсичное поведение", date: "28.03.2025", by: "NeonShadow" },
-  { id: 3, name: "HackBot9000", reason: "Бот / автоматизация", date: "01.04.2025", by: "CyberWolf" },
+
 ];
 
 const MOCK_AUDIT = [
@@ -44,7 +44,7 @@ const MOCK_AUDIT = [
   { id: 3, user: "CyberWolf", action: "Создал канал", target: "#медиа", time: "20.03 18:45", type: "create" },
   { id: 4, user: "NeonShadow", action: "Выдал мут (1ч)", target: "IronCore", time: "02.04 22:17", type: "mute" },
   { id: 5, user: "CyberWolf", action: "Изменил роль", target: "GhostRunner → Разведчик", time: "04.04 11:00", type: "role" },
-  { id: 6, user: "CyberWolf", action: "Забанил", target: "HackBot9000", time: "01.04 03:55", type: "ban" },
+
 ];
 
 const ROLES_DATA = [
