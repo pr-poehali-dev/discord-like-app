@@ -98,7 +98,7 @@ export default function UserSettings({ user, avatarImg: avatarImgProp, onAvatarC
   const [username, setUsername] = useState(user.username);
   const [avatarColor, setAvatarColor] = useState(user.avatar_color);
   const [avatarImg, setAvatarImg] = useState<string | null>(avatarImgProp ?? null);
-  const [bannerImg, setBannerImg] = useState<string | null>(null);
+  const [bannerImg, setBannerImg] = useState<string | null>(localStorage.getItem("bannerImg"));
   const [bannerColor, setBannerColor] = useState("#0d1424");
   const [userStatus, setUserStatus] = useState("online");
   const [customStatus, setCustomStatus] = useState("");
@@ -184,6 +184,7 @@ export default function UserSettings({ user, avatarImg: avatarImgProp, onAvatarC
         onAvatarChange?.(result, avatarColor);
       } else {
         setBannerImg(result);
+        localStorage.setItem("bannerImg", result);
       }
     };
     reader.readAsDataURL(file);

@@ -11,6 +11,8 @@ interface Member {
   avatar: string;
   game?: string;
   mutual?: number;
+  avatarImg?: string;
+  bannerImg?: string;
 }
 
 interface ProfileModalProps {
@@ -76,7 +78,8 @@ export default function ProfileModal({ member, onClose, onMessage, onCall }: Pro
       <div className="w-80 rounded-2xl overflow-hidden shadow-2xl" style={{ background: "var(--dark-panel)", border: `1px solid ${member.color}28` }}>
 
         {/* Banner */}
-        <div className="relative" style={{ height: "90px", background: bannerBg }}>
+        <div className="relative" style={{ height: "90px", background: member.bannerImg ? "transparent" : bannerBg }}>
+          {member.bannerImg && <img src={member.bannerImg} alt="banner" className="absolute inset-0 w-full h-full object-cover" />}
           {/* Glow effect */}
           <div className="absolute inset-0" style={{ background: `radial-gradient(ellipse at 50% 100%, ${member.color}18 0%, transparent 70%)` }} />
 
@@ -121,8 +124,11 @@ export default function ProfileModal({ member, onClose, onMessage, onCall }: Pro
         {/* Avatar overlap */}
         <div className="px-4 relative" style={{ marginTop: "-32px" }}>
           <div className="relative inline-block">
-            <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: member.color + "22", border: `3px solid var(--dark-panel)`, color: member.color, ...rF, fontWeight: 900, fontSize: "18px", boxShadow: `0 0 20px ${member.color}33` }}>
-              {member.avatar}
+            <div className="w-16 h-16 rounded-full overflow-hidden flex items-center justify-center" style={{ background: member.color + "22", border: `3px solid var(--dark-panel)`, color: member.color, ...rF, fontWeight: 900, fontSize: "18px", boxShadow: `0 0 20px ${member.color}33` }}>
+              {member.avatarImg
+                ? <img src={member.avatarImg} alt={member.name} className="w-full h-full object-cover" />
+                : member.avatar
+              }
             </div>
             <div className="absolute bottom-1 right-0.5 w-4 h-4 rounded-full border-2" style={{ background: STATUS_COLOR[member.status], borderColor: "var(--dark-panel)" }} />
           </div>

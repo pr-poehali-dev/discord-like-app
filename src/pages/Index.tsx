@@ -41,7 +41,7 @@ interface TextChannel { id: number; name: string; unread?: number; pinned?: bool
 interface VoiceChannel { id: number; name: string; users: number; streaming: boolean; }
 interface ForumChannel { id: number; name: string; posts: number; }
 interface ServerChannels { text: TextChannel[]; voice: VoiceChannel[]; forum: ForumChannel[]; }
-interface ServerMember { id: number; name: string; role: string; roleColor: string; status: string; avatar: string; game: string; color: string; }
+interface ServerMember { id: number; name: string; role: string; roleColor: string; status: string; avatar: string; game: string; color: string; avatarImg?: string; bannerImg?: string; }
 interface ServerRole { id: number; name: string; color: string; members: number; perms: string[]; }
 interface Msg {
   id: number;
@@ -948,7 +948,19 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
                       size={36}
                       onClick={() => {
                         const m = MEMBERS.find(mb => mb.name === msg.user);
-                        setProfileMember(m || { id: msg.user_id || 0, name: msg.user, color: msg.color, role: msg.role || "", roleColor: msg.roleColor || msg.color, status: "online", avatar: msg.avatar, game: "" });
+                        const isMe = msg.user === user.username;
+                        setProfileMember(m || {
+                          id: msg.user_id || 0,
+                          name: msg.user,
+                          color: msg.color,
+                          role: msg.role || "",
+                          roleColor: msg.roleColor || msg.color,
+                          status: isMe ? "online" : "online",
+                          avatar: msg.avatar,
+                          game: "",
+                          avatarImg: isMe ? (avatarImg ?? undefined) : undefined,
+                          bannerImg: isMe ? (localStorage.getItem("bannerImg") ?? undefined) : undefined,
+                        });
                       }}
                       className="hover:scale-110 transition-all"
                     />
