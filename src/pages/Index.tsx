@@ -370,14 +370,6 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   const activeVoiceChannelRef = useRef<number | null>(null);
   const activeServerRef = useRef<number>(1);
 
-  // Синхронизация refs с актуальными state-значениями
-  micMutedRef.current = micMuted;
-  headphonesDeafRef.current = headphonesDeaf;
-  isStreamingRef.current = isStreaming;
-  isSpeakingRef.current = !micMuted && micLevel > 0.06;
-  activeVoiceChannelRef.current = activeVoiceChannel;
-  activeServerRef.current = activeServer;
-
   // WebRTC для голосовых каналов (без call_id — каналы не используют p2p сигналинг, только устройства)
   const voiceWebRTC = useWebRTC({
     userId: user?.id ?? 0,
@@ -389,6 +381,14 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
 
   // Уровень громкости микрофона (0..1)
   const micLevel = useMicLevel(myStream, micMuted);
+
+  // Синхронизация refs с актуальными state-значениями
+  micMutedRef.current = micMuted;
+  headphonesDeafRef.current = headphonesDeaf;
+  isStreamingRef.current = isStreaming;
+  isSpeakingRef.current = !micMuted && micLevel > 0.06;
+  activeVoiceChannelRef.current = activeVoiceChannel;
+  activeServerRef.current = activeServer;
 
   const server = servers.find(s => s.id === activeServer) || servers[0];
   const sData = SERVER_DATA[activeServer] || SERVER_DATA[1];
