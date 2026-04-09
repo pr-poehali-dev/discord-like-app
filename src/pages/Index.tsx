@@ -959,7 +959,7 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
     <audio ref={notifAudioRef} src="https://cdn.poehali.dev/projects/p25996638/bucket/notif.mp3" preload="auto" />
     <input type="file" ref={fileInputRef} className="hidden" accept="image/*,video/*,.pdf,.txt,.zip" onChange={e => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = ""; }} />
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--dark-bg)", fontFamily: "IBM Plex Sans, sans-serif" }}>
-      {showServerSettings && <ServerSettings
+      {showServerSettings && server && <ServerSettings
         server={server}
         onClose={() => setShowServerSettings(false)}
         currentUserId={user.id}
