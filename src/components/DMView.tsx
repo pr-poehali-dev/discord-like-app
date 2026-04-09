@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import Icon from "@/components/ui/icon";
 import UserAvatar from "@/components/UserAvatar";
 import IncomingCall from "@/components/IncomingCall";
-import AudioDevicePicker from "@/components/AudioDevicePicker";
+import DeviceSettingsPanel from "@/components/DeviceSettingsPanel";
 import { useWebRTC } from "@/hooks/useWebRTC";
 
 const DM_URL = "https://functions.poehali.dev/b026ce37-f295-45e6-9d62-287d071942eb";
@@ -521,21 +521,9 @@ export default function DMView({
         />
       )}
 
-      {/* Выбор устройств */}
+      {/* Настройки устройств */}
       {showDevicePicker && (
-        <AudioDevicePicker
-          audioDevices={webrtc.audioDevices}
-          videoDevices={webrtc.videoDevices}
-          outputDevices={webrtc.outputDevices}
-          selectedMic={webrtc.selectedMic}
-          selectedCamera={webrtc.selectedCamera}
-          selectedSpeaker={webrtc.selectedSpeaker}
-          onSelectMic={webrtc.selectMic}
-          onSelectCamera={webrtc.selectCamera}
-          onSelectSpeaker={webrtc.selectSpeaker}
-          withVideo={callVideo}
-          onClose={() => setShowDevicePicker(false)}
-        />
+        <DeviceSettingsPanel withVideo={callVideo} onClose={() => setShowDevicePicker(false)} />
       )}
 
       {/* Сайдбар */}
@@ -707,7 +695,7 @@ export default function DMView({
                     <Icon name="Video" size={15} style={{ color: "#00aaff" }} />
                   </button>
                   {/* Настройки устройств (всегда доступны) */}
-                  <button onClick={() => { webrtc.refreshDevices(); setShowDevicePicker(true); }}
+                  <button onClick={() => setShowDevicePicker(true)}
                     className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity"
                     style={{ background: "rgba(255,255,255,0.05)" }} title="Настройки микрофона и динамика">
                     <Icon name="Settings2" size={15} style={{ color: "#6b7fa3" }} />

@@ -1,41 +1,24 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useAudioDevices } from "./useAudioDevices";
+export type { AudioDevice } from "./useAudioDevices";
 
 const DM_URL = "https://functions.poehali.dev/b026ce37-f295-45e6-9d62-287d071942eb";
 
-// Google STUN + открытые STUN серверы
 const ICE_SERVERS = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
-    { urls: "stun:stun2.l.google.com:19302" },
-    { urls: "stun:openrelay.metered.ca:80" },
-    {
-      urls: "turn:openrelay.metered.ca:80",
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
-    {
-      urls: "turn:openrelay.metered.ca:443",
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
+    { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
   ],
 };
-
-export interface AudioDevice {
-  deviceId: string;
-  label: string;
-  kind: MediaDeviceKind;
-}
 
 interface UseWebRTCOptions {
   userId: number;
   callId: number | null;
   remoteUserId: number | null;
-  isInitiator: boolean; // true = звонящий, false = принимающий
+  isInitiator: boolean;
   withVideo?: boolean;
-  micDeviceId?: string;
-  speakerDeviceId?: string;
 }
 
 export interface WebRTCState {
@@ -44,16 +27,16 @@ export interface WebRTCState {
   connected: boolean;
   micMuted: boolean;
   deafened: boolean;
-  audioDevices: AudioDevice[];
-  videoDevices: AudioDevice[];
-  outputDevices: AudioDevice[];
+  audioDevices: ReturnType<typeof useAudioDevices>["audioDevices"];
+  videoDevices: ReturnType<typeof useAudioDevices>["videoDevices"];
+  outputDevices: ReturnType<typeof useAudioDevices>["outputDevices"];
   selectedMic: string;
   selectedCamera: string;
   selectedSpeaker: string;
   setMicMuted: (v: boolean) => void;
   setDeafened: (v: boolean) => void;
-  selectMic: (deviceId: string) => void;
-  selectCamera: (deviceId: string) => void;
+  selectMic: (deviceId: string) => Promise<void>;
+  selectCamera: (deviceId: string) => Promise<void>;
   selectSpeaker: (deviceId: string) => void;
   hangup: () => void;
   refreshDevices: () => Promise<void>;
@@ -62,36 +45,19 @@ export interface WebRTCState {
 export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
   const { userId, callId, remoteUserId, isInitiator, withVideo = false } = options;
 
+  const devices = useAudioDevices();
+
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [connected, setConnected] = useState(false);
   const [micMuted, setMicMutedState] = useState(false);
   const [deafened, setDeafenedState] = useState(false);
-  const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
-  const [videoDevices, setVideoDevices] = useState<AudioDevice[]>([]);
-  const [outputDevices, setOutputDevices] = useState<AudioDevice[]>([]);
-  const [selectedMic, setSelectedMic] = useState<string>("default");
-  const [selectedCamera, setSelectedCamera] = useState<string>("default");
-  const [selectedSpeaker, setSelectedSpeaker] = useState<string>("default");
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
-
-  // ── Список устройств ────────────────────────────────────
-  const refreshDevices = useCallback(async () => {
-    try {
-      // Запрашиваем разрешение сначала
-      await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
-    } catch { /* нет доступа */ }
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      setAudioDevices(devices.filter(d => d.kind === "audioinput").map(d => ({ deviceId: d.deviceId, label: d.label || `Микрофон ${d.deviceId.slice(0, 8)}`, kind: d.kind })));
-      setVideoDevices(devices.filter(d => d.kind === "videoinput").map(d => ({ deviceId: d.deviceId, label: d.label || `Камера ${d.deviceId.slice(0, 8)}`, kind: d.kind })));
-      setOutputDevices(devices.filter(d => d.kind === "audiooutput").map(d => ({ deviceId: d.deviceId, label: d.label || `Динамик ${d.deviceId.slice(0, 8)}`, kind: d.kind })));
-    } catch { /* silent */ }
-  }, []);
+  const micMutedRef = useRef(false);
 
   // ── Получить локальный поток ────────────────────────────
   const getLocalStream = useCallback(async (micId?: string, cameraId?: string) => {
@@ -99,13 +65,16 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(t => t.stop());
       }
-      const constraints: MediaStreamConstraints = {
-        audio: micId && micId !== "default" ? { deviceId: { exact: micId } } : true,
-        video: withVideo
-          ? (cameraId && cameraId !== "default" ? { deviceId: { exact: cameraId } } : true)
-          : false,
-      };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const mic = micId ?? devices.selectedMic;
+      const cam = cameraId ?? devices.selectedCamera;
+      const audioConstraint = mic && mic !== "default" ? { deviceId: { exact: mic } } : true;
+      const videoConstraint = withVideo
+        ? (cam && cam !== "default" ? { deviceId: { exact: cam } } : true)
+        : false;
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraint,
+        video: videoConstraint,
+      });
       localStreamRef.current = stream;
       setLocalStream(stream);
       return stream;
@@ -113,7 +82,7 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
       console.error("getUserMedia error:", err);
       return null;
     }
-  }, [withVideo]);
+  }, [withVideo, devices.selectedMic, devices.selectedCamera]);
 
   // ── Отправить WebRTC сигнал ─────────────────────────────
   const sendSignal = useCallback(async (type: string, payload: object) => {
@@ -139,30 +108,21 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pcRef.current = pc;
 
-    // Добавляем свои треки
     stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
-    // Принимаем удалённые треки
     pc.ontrack = (event) => {
       const [remoteS] = event.streams;
       setRemoteStream(remoteS);
-      // Подключаем к аудио-элементу
       if (!remoteAudioRef.current) {
         remoteAudioRef.current = new Audio();
         remoteAudioRef.current.autoplay = true;
       }
       remoteAudioRef.current.srcObject = remoteS;
-      if (selectedSpeaker !== "default" && "setSinkId" in remoteAudioRef.current) {
-        (remoteAudioRef.current as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> })
-          .setSinkId(selectedSpeaker).catch(() => {});
-      }
+      devices.applyOutputToElement(remoteAudioRef.current);
     };
 
-    // ICE кандидаты
     pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        sendSignal("ice", { candidate: event.candidate });
-      }
+      if (event.candidate) sendSignal("ice", { candidate: event.candidate });
     };
 
     pc.onconnectionstatechange = () => {
@@ -176,7 +136,7 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
     };
 
     return pc;
-  }, [sendSignal, selectedSpeaker]);
+  }, [sendSignal, devices]);
 
   // ── Polling сигналов ────────────────────────────────────
   const pollSignals = useCallback(async () => {
@@ -201,31 +161,28 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
             await pc.setRemoteDescription(new RTCSessionDescription(payload));
           }
         } else if (sig.type === "ice") {
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
-          } catch { /* ignore stale candidates */ }
+          try { await pc.addIceCandidate(new RTCIceCandidate(payload.candidate)); } catch { /* stale */ }
         } else if (sig.type === "hangup") {
           hangup();
         }
       }
     } catch { /* silent */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [callId, userId, sendSignal]);
 
-  // ── Основной эффект — инициализация звонка ──────────────
+  // ── Инициализация звонка ────────────────────────────────
   useEffect(() => {
     if (!callId || !remoteUserId) return;
-
     let cancelled = false;
 
     const init = async () => {
-      await refreshDevices();
-      const stream = await getLocalStream(selectedMic, selectedCamera);
+      await devices.refreshDevices();
+      const stream = await getLocalStream();
       if (!stream || cancelled) return;
 
       const pc = createPC(stream);
 
       if (isInitiator) {
-        // Звонящий создаёт offer
         try {
           const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: withVideo });
           await pc.setLocalDescription(offer);
@@ -235,7 +192,6 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
         }
       }
 
-      // Запускаем polling сигналов каждые 800ms
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(pollSignals, 800);
     };
@@ -249,80 +205,72 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [callId, remoteUserId]);
 
-  // ── Мут/анмут микрофона ─────────────────────────────────
+  // ── Мут микрофона ───────────────────────────────────────
   const setMicMuted = useCallback((v: boolean) => {
     setMicMutedState(v);
+    micMutedRef.current = v;
     localStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !v; });
   }, []);
 
-  // ── Деафен (заглушить входящий звук) ───────────────────
+  // ── Деафен ──────────────────────────────────────────────
   const setDeafened = useCallback((v: boolean) => {
     setDeafenedState(v);
     if (remoteAudioRef.current) remoteAudioRef.current.muted = v;
   }, []);
 
-  // ── Смена микрофона на лету ─────────────────────────────
+  // ── Смена микрофона мгновенно ───────────────────────────
   const selectMic = useCallback(async (deviceId: string) => {
-    setSelectedMic(deviceId);
+    devices.setSelectedMic(deviceId);
     const pc = pcRef.current;
-    if (!pc || !localStreamRef.current) return;
+    if (!localStreamRef.current) return;
     try {
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        audio: deviceId !== "default" ? { deviceId: { exact: deviceId } } : true,
-        video: false,
-      });
+      const constraint = deviceId !== "default" ? { deviceId: { exact: deviceId } } : true;
+      const newStream = await navigator.mediaDevices.getUserMedia({ audio: constraint, video: false });
       const newAudioTrack = newStream.getAudioTracks()[0];
-      // Заменяем трек в PeerConnection
-      const sender = pc.getSenders().find(s => s.track?.kind === "audio");
-      if (sender) await sender.replaceTrack(newAudioTrack);
-      // Останавливаем старый аудио-трек
+      newAudioTrack.enabled = !micMutedRef.current;
+      // Заменяем в PC до остановки старого — без паузы
+      if (pc) {
+        const sender = pc.getSenders().find(s => s.track?.kind === "audio");
+        if (sender) await sender.replaceTrack(newAudioTrack);
+      }
       localStreamRef.current.getAudioTracks().forEach(t => t.stop());
-      // Обновляем stream
-      const updatedTracks = [...localStreamRef.current.getVideoTracks(), newAudioTrack];
-      const updatedStream = new MediaStream(updatedTracks);
-      localStreamRef.current = updatedStream;
-      setLocalStream(updatedStream);
-      if (micMuted) newAudioTrack.enabled = false;
+      const updated = new MediaStream([
+        newAudioTrack,
+        ...localStreamRef.current.getVideoTracks(),
+      ]);
+      localStreamRef.current = updated;
+      setLocalStream(updated);
     } catch (err) {
       console.error("selectMic error:", err);
     }
-  }, [micMuted]);
+  }, [devices]);
 
   // ── Смена камеры ────────────────────────────────────────
   const selectCamera = useCallback(async (deviceId: string) => {
-    setSelectedCamera(deviceId);
+    devices.setSelectedCamera(deviceId);
     if (!withVideo || !pcRef.current) return;
     try {
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        video: deviceId !== "default" ? { deviceId: { exact: deviceId } } : true,
-        audio: false,
-      });
+      const constraint = deviceId !== "default" ? { deviceId: { exact: deviceId } } : true;
+      const newStream = await navigator.mediaDevices.getUserMedia({ video: constraint, audio: false });
       const newVideoTrack = newStream.getVideoTracks()[0];
       const sender = pcRef.current.getSenders().find(s => s.track?.kind === "video");
       if (sender) await sender.replaceTrack(newVideoTrack);
     } catch (err) {
       console.error("selectCamera error:", err);
     }
-  }, [withVideo]);
+  }, [withVideo, devices]);
 
   // ── Смена динамика ──────────────────────────────────────
-  const selectSpeaker = useCallback(async (deviceId: string) => {
-    setSelectedSpeaker(deviceId);
-    if (remoteAudioRef.current && "setSinkId" in remoteAudioRef.current) {
-      try {
-        await (remoteAudioRef.current as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> })
-          .setSinkId(deviceId);
-      } catch (err) {
-        console.error("setSinkId error:", err);
-      }
+  const selectSpeaker = useCallback((deviceId: string) => {
+    devices.setSelectedSpeaker(deviceId);
+    if (remoteAudioRef.current) {
+      devices.applyOutputToElement(remoteAudioRef.current);
     }
-  }, []);
+  }, [devices]);
 
   // ── Завершить звонок ────────────────────────────────────
   const hangup = useCallback(() => {
-    if (callId && remoteUserId) {
-      sendSignal("hangup", {}).catch(() => {});
-    }
+    if (callId && remoteUserId) sendSignal("hangup", {}).catch(() => {});
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     pcRef.current?.close();
     pcRef.current = null;
@@ -336,13 +284,6 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
       remoteAudioRef.current = null;
     }
   }, [callId, remoteUserId, sendSignal]);
-
-  // Слушаем изменение устройств
-  useEffect(() => {
-    navigator.mediaDevices.addEventListener("devicechange", refreshDevices);
-    refreshDevices();
-    return () => navigator.mediaDevices.removeEventListener("devicechange", refreshDevices);
-  }, [refreshDevices]);
 
   // Cleanup при unmount
   useEffect(() => {
@@ -360,18 +301,18 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
     connected,
     micMuted,
     deafened,
-    audioDevices,
-    videoDevices,
-    outputDevices,
-    selectedMic,
-    selectedCamera,
-    selectedSpeaker,
+    audioDevices: devices.audioDevices,
+    videoDevices: devices.videoDevices,
+    outputDevices: devices.outputDevices,
+    selectedMic: devices.selectedMic,
+    selectedCamera: devices.selectedCamera,
+    selectedSpeaker: devices.selectedSpeaker,
     setMicMuted,
     setDeafened,
     selectMic,
     selectCamera,
     selectSpeaker,
     hangup,
-    refreshDevices,
+    refreshDevices: devices.refreshDevices,
   };
 }

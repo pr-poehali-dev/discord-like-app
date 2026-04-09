@@ -9,7 +9,7 @@ import StreamCapture from "@/components/StreamCapture";
 import DMView from "@/components/DMView";
 import ProfileModal from "@/components/ProfileModal";
 import UserAvatar from "@/components/UserAvatar";
-import AudioDevicePicker from "@/components/AudioDevicePicker";
+import DeviceSettingsPanel from "@/components/DeviceSettingsPanel";
 import { useMicLevel } from "@/hooks/useMicLevel";
 import { useVoiceChannel } from "@/hooks/useVoiceChannel";
 
@@ -324,6 +324,7 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [hasVideo, setHasVideo] = useState(false);
+  const [showVoiceDevicePicker, setShowVoiceDevicePicker] = useState(false);
   const [forumThreads, setForumThreads] = useState<{ id: number; title: string; content: string; author_name: string; avatar_color: string; tags?: string; pinned?: boolean; locked?: boolean; created_at: string; reply_count: number }[]>([]);
   const [activeForumChannel, setActiveForumChannel] = useState<number | null>(null);
   const [activeThread, setActiveThread] = useState<{ id: number; title: string; content: string; author_name: string; avatar_color: string; tags?: string; pinned?: boolean; locked?: boolean; created_at: string; reply_count: number } | null>(null);
@@ -1245,35 +1246,17 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
               </div>
             </div>
 
-            {/* Выбор микрофона */}
-            {voiceChannel.audioDevices.length > 0 && (
-              <div className="mb-1.5">
-                <div style={{ fontFamily: "Rajdhani, sans-serif", fontSize: "9px", color: "#4a5568", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: "3px" }}>Микрофон</div>
-                <select
-                  value={voiceChannel.selectedMic}
-                  onChange={e => voiceChannel.selectMic(e.target.value)}
-                  className="w-full rounded-lg px-2 py-1 text-xs"
-                  style={{ background: "#0d1424", border: "1px solid rgba(255,255,255,0.08)", color: "#8899bb", fontFamily: "IBM Plex Sans, sans-serif", fontSize: "11px", outline: "none" }}>
-                  {voiceChannel.audioDevices.map(d => (
-                    <option key={d.deviceId} value={d.deviceId}>{d.label}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Выбор динамика */}
-            {voiceChannel.outputDevices.length > 0 && (
-              <div className="mb-2">
-                <div style={{ fontFamily: "Rajdhani, sans-serif", fontSize: "9px", color: "#4a5568", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: "3px" }}>Динамик</div>
-                <select
-                  value={voiceChannel.selectedSpeaker}
-                  onChange={e => voiceChannel.selectSpeaker(e.target.value)}
-                  className="w-full rounded-lg px-2 py-1 text-xs"
-                  style={{ background: "#0d1424", border: "1px solid rgba(255,255,255,0.08)", color: "#8899bb", fontFamily: "IBM Plex Sans, sans-serif", fontSize: "11px", outline: "none" }}>
-                  {voiceChannel.outputDevices.map(d => (
-                    <option key={d.deviceId} value={d.deviceId}>{d.label}</option>
-                  ))}
-                </select>
+            {/* Активные устройства — краткий вид */}
+            {(voiceChannel.audioDevices.length > 0 || voiceChannel.outputDevices.length > 0) && (
+              <div className="mb-2 px-1" style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "10px", color: "#4a5568" }}>
+                <div className="flex items-center gap-1 mb-0.5">
+                  <Icon name="Mic" size={9} style={{ color: "#4a5568" }} />
+                  <span className="truncate">{voiceChannel.audioDevices.find(d => d.deviceId === voiceChannel.selectedMic)?.label || "Микрофон"}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Icon name="Volume2" size={9} style={{ color: "#4a5568" }} />
+                  <span className="truncate">{voiceChannel.outputDevices.find(d => d.deviceId === voiceChannel.selectedSpeaker)?.label || "Динамик"}</span>
+                </div>
               </div>
             )}
 
@@ -1286,6 +1269,10 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
               <button onClick={() => setHeadphonesDeaf(v => !v)} className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity"
                 style={{ background: headphonesDeaf ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.06)", color: headphonesDeaf ? "#ff4444" : "#6b7fa3" }} title={headphonesDeaf ? "Включить звук" : "Выключить звук"}>
                 <Icon name={headphonesDeaf ? "VolumeX" : "Headphones"} size={13} />
+              </button>
+              <button onClick={() => setShowVoiceDevicePicker(true)} className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity"
+                style={{ background: "rgba(255,255,255,0.06)", color: "#6b7fa3" }} title="Настройки устройств">
+                <Icon name="Settings2" size={13} />
               </button>
               <button onClick={leaveVoiceChannel} className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity ml-auto"
                 style={{ background: "rgba(255,68,68,0.15)", color: "#ff4444" }} title="Покинуть канал">
@@ -2186,7 +2173,10 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
       )}
     </div>
 
-
+    {/* Единые настройки устройств */}
+    {showVoiceDevicePicker && (
+      <DeviceSettingsPanel onClose={() => setShowVoiceDevicePicker(false)} />
+    )}
     </>
   );
 }
