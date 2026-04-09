@@ -769,7 +769,7 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
         }
       }} />}
       {showChannelSettings && <ChannelSettings channel={sData.channels.text.find(c => c.id === activeChannel) || sData.channels.text[0]} onClose={() => setShowChannelSettings(false)} />}
-      {showStreamCapture && <StreamCapture onClose={() => setShowStreamCapture(false)} onStart={() => setStreamActive(true)} />}
+      {showStreamCapture && <StreamCapture onClose={() => setShowStreamCapture(false)} onStart={() => setShowStreamCapture(false)} />}
       {profileMember && (
         <ProfileModal
           member={{ id: profileMember.id, name: profileMember.name, color: profileMember.color, role: profileMember.role, roleColor: profileMember.roleColor, status: profileMember.status, avatar: profileMember.avatar, game: profileMember.game, mutual: 3 }}
