@@ -13,6 +13,7 @@ import UserAvatar from "@/components/UserAvatar";
 const MESSAGES_URL = "https://functions.poehali.dev/bd122cd3-cf73-44cb-b4a3-4b1eb3cfdaac";
 const API_URL = "https://functions.poehali.dev/34ebed0a-100a-450c-8c07-780342df2a96";
 const ONLINE_URL = "https://functions.poehali.dev/66112eb3-a471-46d1-b43a-c46fa78fbe18";
+const EXTRA_URL = "https://functions.poehali.dev/c074df0d-1419-4f35-8521-e4b9d170082c";
 
 interface User {
   id: number;
@@ -69,6 +70,11 @@ interface Msg {
   file_type?: string;
   edited?: boolean;
   is_removed?: boolean;
+  reply_to_id?: number;
+  reply_to_text?: string;
+  reply_to_user?: string;
+  mentions?: string;
+  date?: string;
 }
 
 const SERVER_DATA: Record<number, { channels: ServerChannels; members: ServerMember[]; roles: ServerRole[]; messages: Record<number, Msg[]> }> = {
@@ -323,6 +329,26 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   const [newThreadTags, setNewThreadTags] = useState("");
   const [showNewThread, setShowNewThread] = useState(false);
   const [replyInput, setReplyInput] = useState("");
+  // Typing indicator
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  // Reply-to
+  const [replyTo, setReplyTo] = useState<{ id: number; text: string; user: string } | null>(null);
+  // Pinned messages
+  const [pinnedMessages, setPinnedMessages] = useState<{ id: number; username: string; avatar_color: string; text: string; time: string; pinned_at: string }[]>([]);
+  const [showPinned, setShowPinned] = useState(false);
+  // Invite modal
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteCode, setInviteCode] = useState("");
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [joinCode, setJoinCode] = useState("");
+  const [joinStatus, setJoinStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [joinError, setJoinError] = useState("");
+  // Members sidebar
+  const [showMembersSidebar, setShowMembersSidebar] = useState(true);
+  // @mention autocomplete
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const onlinePollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -456,6 +482,11 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
     if (!inputValue.trim()) return;
     const text = inputValue.trim();
     setInputValue("");
+    setReplyTo(null);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    // Извлекаем упоминания из текста
+    const mentionRegex = /@(\w+)/g;
+    const foundMentions = [...text.matchAll(mentionRegex)].map(m => m[1]).join(",");
     try {
       await fetch(MESSAGES_URL, {
         method: "POST",
@@ -467,10 +498,123 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
           username: user.username,
           avatar_color: user.avatar_color,
           text,
+          reply_to_id: replyTo?.id ?? null,
+          reply_to_text: replyTo?.text ?? "",
+          reply_to_user: replyTo?.user ?? "",
+          mentions: foundMentions,
         }),
       });
       fetchMessages(activeServer, activeChannel);
     } catch { /* silent */ }
+  };
+
+  // Typing indicator
+  const handleInputChange = (val: string) => {
+    setInputValue(val);
+    // @ autocomplete
+    const lastAt = val.lastIndexOf("@");
+    if (lastAt !== -1 && lastAt === val.length - 1 - (val.length - 1 - lastAt)) {
+      const query = val.slice(lastAt + 1);
+      if (query.length >= 0) { setMentionQuery(query); setMentionOpen(true); }
+    } else { setMentionOpen(false); }
+    // Typing
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    fetch(EXTRA_URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "typing_start", server_id: activeServer, channel_id: activeChannel, user_id: user.id, username: user.username }),
+    }).catch(() => {});
+    typingTimeoutRef.current = setTimeout(() => {}, 5000);
+  };
+
+  // Загрузка typing пользователей
+  const fetchTyping = async () => {
+    try {
+      const res = await fetch(`${EXTRA_URL}?action=typing_list&channel_id=${activeChannel}&user_id=${user.id}`);
+      const data = await res.json();
+      setTypingUsers(data.typing || []);
+    } catch { /* silent */ }
+  };
+
+  // Загрузка закреплённых
+  const fetchPinned = async () => {
+    try {
+      const res = await fetch(`${EXTRA_URL}?action=get_pinned&channel_id=${activeChannel}`);
+      const data = await res.json();
+      if (data.pinned) setPinnedMessages(data.pinned);
+    } catch { /* silent */ }
+  };
+
+  // Закрепить/открепить сообщение
+  const pinMessage = async (msgId: number) => {
+    try {
+      await fetch(EXTRA_URL, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "pin_message", server_id: activeServer, channel_id: activeChannel, message_id: msgId, user_id: user.id }),
+      });
+      fetchPinned();
+    } catch { /* silent */ }
+  };
+
+  const unpinMessage = async (msgId: number) => {
+    try {
+      await fetch(EXTRA_URL, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "unpin_message", channel_id: activeChannel, message_id: msgId }),
+      });
+      fetchPinned();
+    } catch { /* silent */ }
+  };
+
+  // Typing polling при смене канала
+  useEffect(() => {
+    setTypingUsers([]);
+    setReplyTo(null);
+    setMentionOpen(false);
+    fetchPinned();
+    const typingInterval = setInterval(fetchTyping, 2500);
+    return () => clearInterval(typingInterval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChannel]);
+
+  // Создать инвайт
+  const createInvite = async () => {
+    setInviteLoading(true);
+    try {
+      const res = await fetch(EXTRA_URL, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "create_invite", server_id: activeServer, user_id: user.id }),
+      });
+      const data = await res.json();
+      if (data.code) setInviteCode(data.code);
+    } catch { /* silent */ }
+    setInviteLoading(false);
+  };
+
+  // Вступить по инвайту
+  const joinByInvite = async () => {
+    if (!joinCode.trim()) return;
+    setJoinStatus("loading");
+    try {
+      const res = await fetch(EXTRA_URL, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "use_invite", code: joinCode.trim(), user_id: user.id }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setJoinStatus("ok");
+        setJoinCode("");
+        fetchServers();
+        setTimeout(() => setJoinStatus("idle"), 2500);
+      } else {
+        setJoinStatus("error");
+        setJoinError(data.error || "Ошибка");
+        setTimeout(() => setJoinStatus("idle"), 3000);
+      }
+    } catch {
+      setJoinStatus("error");
+      setJoinError("Ошибка соединения");
+      setTimeout(() => setJoinStatus("idle"), 3000);
+    }
   };
 
   // Heartbeat онлайн
@@ -1092,22 +1236,43 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
             {activeTab === "chat" && <span className="h-4 w-px mx-1" style={{ background: "rgba(255,255,255,0.15)" }} />}
             {activeTab === "chat" && <span className="text-sm" style={{ color: "#6b7fa3" }}>Тактические обсуждения</span>}
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setShowStreamCapture(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all duration-200 hover:opacity-90" style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", background: isStreaming ? "rgba(255,0,170,0.2)" : "rgba(0,255,136,0.1)", color: isStreaming ? "#ff00aa" : "#00ff88", border: `1px solid ${isStreaming ? "#ff00aa44" : "#00ff8844"}` }}>
-              <Icon name={isStreaming ? "MonitorOff" : "MonitorPlay"} size={14} />
-              {isStreaming ? "В эфире" : "Стримить"}
+          <div className="flex items-center gap-1.5">
+            {/* Закреплённые */}
+            {activeTab === "chat" && (
+              <button onClick={() => { setShowPinned(v => !v); if (!showPinned) fetchPinned(); }}
+                className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity relative"
+                style={{ background: showPinned ? "rgba(255,204,0,0.15)" : "rgba(255,255,255,0.05)" }}
+                title="Закреплённые сообщения">
+                <Icon name="Pin" size={15} style={{ color: showPinned ? "#ffcc00" : "#6b7fa3" }} />
+                {pinnedMessages.length > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full flex items-center justify-center text-white" style={{ background: "#ff00aa", fontSize: "8px", fontWeight: 700 }}>
+                    {pinnedMessages.length}
+                  </span>
+                )}
+              </button>
+            )}
+            {/* Участники */}
+            <button onClick={() => setShowMembersSidebar(v => !v)}
+              className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity"
+              style={{ background: showMembersSidebar ? "rgba(0,255,136,0.12)" : "rgba(255,255,255,0.05)" }}
+              title="Список участников">
+              <Icon name="Users" size={15} style={{ color: showMembersSidebar ? "#00ff88" : "#6b7fa3" }} />
+            </button>
+            {/* Инвайт */}
+            <button onClick={() => { setShowInvite(v => !v); if (!showInvite) createInvite(); }}
+              className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity"
+              style={{ background: showInvite ? "rgba(0,170,255,0.15)" : "rgba(255,255,255,0.05)" }}
+              title="Пригласить участника">
+              <Icon name="UserPlus" size={15} style={{ color: showInvite ? "#00aaff" : "#6b7fa3" }} />
+            </button>
+            <button onClick={() => setSearchOpen(v => !v)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity" style={{ background: searchOpen ? "rgba(0,255,136,0.15)" : "rgba(255,255,255,0.05)" }}>
+              <Icon name="Search" size={15} style={{ color: searchOpen ? "#00ff88" : "#6b7fa3" }} />
             </button>
             {activeTab === "chat" && (
-              <button onClick={() => setShowChannelSettings(true)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70 transition-opacity" title="Настройки канала" style={{ background: "rgba(255,255,255,0.05)" }}>
+              <button onClick={() => setShowChannelSettings(true)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity" title="Настройки канала" style={{ background: "rgba(255,255,255,0.05)" }}>
                 <Icon name="Settings" size={15} style={{ color: "#6b7fa3" }} />
               </button>
             )}
-            <button onClick={() => setSearchOpen(v => !v)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: searchOpen ? "rgba(0,255,136,0.15)" : "rgba(255,255,255,0.05)" }}>
-              <Icon name="Search" size={15} style={{ color: searchOpen ? "#00ff88" : "#6b7fa3" }} />
-            </button>
-            <button className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(255,255,255,0.05)" }}>
-              <Icon name="Bell" size={15} style={{ color: "#6b7fa3" }} />
-            </button>
           </div>
         </div>
 
@@ -1138,6 +1303,76 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
           </div>
         )}
 
+        {/* Pinned panel */}
+        {showPinned && activeTab === "chat" && (
+          <div className="shrink-0 border-b" style={{ borderColor: "rgba(255,204,0,0.15)", background: "#0a0e1a" }}>
+            <div className="flex items-center justify-between px-4 py-2" style={{ borderBottom: "1px solid rgba(255,204,0,0.1)" }}>
+              <div className="flex items-center gap-2">
+                <Icon name="Pin" size={13} style={{ color: "#ffcc00" }} />
+                <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "13px", color: "#ffcc00" }}>Закреплённые сообщения ({pinnedMessages.length})</span>
+              </div>
+              <button onClick={() => setShowPinned(false)} style={{ color: "#6b7fa3", background: "none", border: "none", cursor: "pointer" }}>✕</button>
+            </div>
+            <div className="overflow-y-auto max-h-52 px-4 py-2 space-y-2">
+              {pinnedMessages.length === 0 && <p style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "13px", color: "#4a5568" }}>Нет закреплённых сообщений</p>}
+              {pinnedMessages.map(p => (
+                <div key={p.id} className="flex items-start gap-2 py-1.5 group">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ background: p.avatar_color + "22", color: p.avatar_color, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "9px" }}>
+                    {p.username.slice(0,2).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px", color: p.avatar_color }}>{p.username}</span>
+                      <span style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "10px", color: "#4a5568" }}>{p.time}</span>
+                    </div>
+                    <p style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "12px", color: "#c8d6e8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.text}</p>
+                  </div>
+                  <button onClick={() => unpinMessage(p.id)} className="opacity-0 group-hover:opacity-100 transition-opacity hover:opacity-80" style={{ color: "#ff4444", background: "none", border: "none", cursor: "pointer", fontSize: "14px" }} title="Открепить">✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Invite panel */}
+        {showInvite && (
+          <div className="shrink-0 border-b px-4 py-3" style={{ borderColor: "rgba(0,170,255,0.15)", background: "#0a0e1a" }}>
+            <div className="flex items-center gap-2 mb-3">
+              <Icon name="UserPlus" size={14} style={{ color: "#00aaff" }} />
+              <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "13px", color: "#00aaff" }}>Пригласить на сервер</span>
+              <button onClick={() => setShowInvite(false)} className="ml-auto" style={{ color: "#6b7fa3", background: "none", border: "none", cursor: "pointer" }}>✕</button>
+            </div>
+            <div className="flex gap-2 mb-2">
+              <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-xl" style={{ background: "rgba(0,170,255,0.08)", border: "1px solid rgba(0,170,255,0.2)" }}>
+                <Icon name="Link" size={13} style={{ color: "#00aaff" }} />
+                <span style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "13px", color: "#e2e8f0" }}>
+                  {inviteLoading ? "Создаю ссылку..." : inviteCode ? `nexus.app/invite/${inviteCode}` : "—"}
+                </span>
+              </div>
+              <button onClick={() => { if (inviteCode) { navigator.clipboard.writeText(`nexus.app/invite/${inviteCode}`); } }}
+                disabled={!inviteCode} className="px-3 py-2 rounded-xl hover:opacity-80 disabled:opacity-30"
+                style={{ background: "rgba(0,170,255,0.15)", color: "#00aaff", border: "1px solid rgba(0,170,255,0.3)", fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px" }}>
+                Скопировать
+              </button>
+            </div>
+            <div className="h-px mb-2" style={{ background: "rgba(255,255,255,0.06)" }} />
+            <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "11px", color: "#6b7fa3", marginBottom: "6px" }}>Вступить по коду</div>
+            <div className="flex gap-2">
+              <input value={joinCode} onChange={e => setJoinCode(e.target.value)} onKeyDown={e => e.key === "Enter" && joinByInvite()}
+                placeholder="Введи код инвайта..."
+                className="flex-1 px-3 py-1.5 rounded-xl outline-none text-sm"
+                style={{ background: "rgba(255,255,255,0.05)", border: `1px solid ${joinStatus === "error" ? "rgba(255,68,68,0.4)" : "rgba(0,170,255,0.2)"}`, color: "#e2e8f0", fontFamily: "IBM Plex Sans, sans-serif" }} />
+              <button onClick={joinByInvite} disabled={joinStatus === "loading"}
+                className="px-3 py-1.5 rounded-xl hover:opacity-80 disabled:opacity-50"
+                style={{ background: "rgba(0,170,255,0.15)", color: "#00aaff", border: "1px solid rgba(0,170,255,0.3)", fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px" }}>
+                {joinStatus === "loading" ? "..." : "Вступить"}
+              </button>
+            </div>
+            {joinStatus === "ok" && <div style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "11px", color: "#00ff88", marginTop: "6px" }}>✓ Вы вступили на сервер!</div>}
+            {joinStatus === "error" && <div style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "11px", color: "#ff4444", marginTop: "6px" }}>✕ {joinError}</div>}
+          </div>
+        )}
+
         {/* Content area */}
         <div className="flex-1 flex overflow-hidden" onClick={() => { if (menuMsgId !== null) setMenuMsgId(null); }}>
 
@@ -1152,7 +1387,17 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
                   >
                     {/* Context menu */}
                     {menuMsgId === msg.id && (
-                      <div className="absolute right-2 top-2 z-50 rounded-xl overflow-hidden shadow-2xl" style={{ background: "#0d1424", border: "1px solid rgba(0,255,136,0.2)", minWidth: "140px" }}>
+                      <div className="absolute right-2 top-2 z-50 rounded-xl overflow-hidden shadow-2xl" style={{ background: "#0d1424", border: "1px solid rgba(0,255,136,0.2)", minWidth: "160px" }}>
+                        <button className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white hover:bg-opacity-5 transition-colors"
+                          onClick={e => { e.stopPropagation(); setReplyTo({ id: msg.id, text: msg.text, user: msg.user }); setMenuMsgId(null); }}
+                          style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", color: "#00aaff" }}>
+                          <Icon name="CornerUpLeft" size={12} /> Ответить
+                        </button>
+                        <button className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white hover:bg-opacity-5 transition-colors"
+                          onClick={e => { e.stopPropagation(); pinMessage(msg.id); setMenuMsgId(null); }}
+                          style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", color: "#ffcc00" }}>
+                          <Icon name="Pin" size={12} /> Закрепить
+                        </button>
                         {msg.user_id === user.id && !msg.is_removed && (
                           <button className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white hover:bg-opacity-5 transition-colors"
                             onClick={e => { e.stopPropagation(); setEditingMsgId(msg.id); setEditingText(msg.text); setMenuMsgId(null); }}
@@ -1198,7 +1443,15 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
                       className="hover:scale-110 transition-all"
                     />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
+                      {/* Reply-to */}
+                      {msg.reply_to_id && msg.reply_to_user && (
+                        <div className="flex items-center gap-1.5 mb-1 ml-1 cursor-pointer hover:opacity-80" onClick={() => { const el = document.getElementById(`msg-${msg.reply_to_id}`); el?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
+                          <div className="w-0.5 h-4 rounded-full" style={{ background: "#6b7fa3" }} />
+                          <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "11px", color: "#6b7fa3" }}>@{msg.reply_to_user}</span>
+                          <span style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "11px", color: "#4a5568", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "300px" }}>{msg.reply_to_text?.slice(0, 80)}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2 mb-0.5" id={`msg-${msg.id}`}>
                         <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "14px", color: msg.color }}>{msg.user}</span>
                         {msg.role && <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "10px", background: msg.roleColor + "22", color: msg.roleColor, border: `1px solid ${msg.roleColor}44`, padding: "1px 6px", borderRadius: "3px", textTransform: "uppercase", letterSpacing: "0.5px" }}>{msg.role}</span>}
                         <span style={{ fontSize: "11px", color: "#4a5568" }}>{msg.time}</span>
@@ -1268,28 +1521,65 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
               </div>
 
               {/* Input */}
-              <div className="px-4 pb-4">
-                <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl" style={{ background: "var(--dark-card)", border: "1px solid rgba(0,255,136,0.1)" }}>
-                  <button className="shrink-0 hover:opacity-70 transition-opacity">
-                    <Icon name="Plus" size={18} style={{ color: "#6b7fa3" }} />
+              <div className="px-4 pb-4 relative">
+                {/* Typing indicator */}
+                {typingUsers.length > 0 && (
+                  <div className="flex items-center gap-1.5 mb-1 px-1">
+                    <div className="flex gap-0.5">
+                      {[0,1,2].map(i => (
+                        <div key={i} className="w-1 h-1 rounded-full animate-bounce" style={{ background: "#6b7fa3", animationDelay: `${i * 0.15}s` }} />
+                      ))}
+                    </div>
+                    <span style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "11px", color: "#6b7fa3" }}>
+                      <strong>{typingUsers.join(", ")}</strong> {typingUsers.length === 1 ? "печатает..." : "печатают..."}
+                    </span>
+                  </div>
+                )}
+                {/* Reply preview */}
+                {replyTo && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 mb-1 rounded-t-xl" style={{ background: "rgba(0,170,255,0.08)", border: "1px solid rgba(0,170,255,0.15)", borderBottom: "none" }}>
+                    <Icon name="CornerUpLeft" size={12} style={{ color: "#00aaff" }} />
+                    <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px", color: "#00aaff" }}>Ответ @{replyTo.user}</span>
+                    <span style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "11px", color: "#6b7fa3", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{replyTo.text.slice(0, 60)}</span>
+                    <button onClick={() => setReplyTo(null)} style={{ color: "#4a5568", background: "none", border: "none", cursor: "pointer", fontSize: "14px" }}>✕</button>
+                  </div>
+                )}
+                {/* @ autocomplete */}
+                {mentionOpen && (
+                  <div className="absolute bottom-full left-4 mb-2 rounded-xl overflow-hidden shadow-xl z-50" style={{ background: "#0d1424", border: "1px solid rgba(0,255,136,0.2)", minWidth: "200px" }}>
+                    {onlineMembers
+                      .filter(m => m.username.toLowerCase().includes(mentionQuery.toLowerCase()))
+                      .slice(0, 8)
+                      .map(m => (
+                        <button key={m.id} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white hover:bg-opacity-5 transition-colors text-left"
+                          onClick={() => {
+                            const lastAt = inputValue.lastIndexOf("@");
+                            setInputValue(inputValue.slice(0, lastAt) + `@${m.username} `);
+                            setMentionOpen(false);
+                          }}>
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ background: m.avatar_color + "22", color: m.avatar_color, fontSize: "9px", fontFamily: "Rajdhani, sans-serif", fontWeight: 700 }}>
+                            {m.username.slice(0,2).toUpperCase()}
+                          </div>
+                          <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "13px", color: m.avatar_color }}>{m.username}</span>
+                        </button>
+                      ))}
+                  </div>
+                )}
+                <div className={`flex items-center gap-2 px-4 py-2.5 ${replyTo ? "rounded-b-xl rounded-t-none" : "rounded-xl"}`} style={{ background: "var(--dark-card)", border: `1px solid ${replyTo ? "rgba(0,170,255,0.15)" : "rgba(0,255,136,0.1)"}`, borderTop: replyTo ? "none" : undefined }}>
+                  <button className="shrink-0 hover:opacity-70 transition-opacity" title="Прикрепить">
+                    <Icon name="Plus" size={18} style={{ color: "#6b7fa3" }} onClick={() => fileInputRef.current?.click()} />
                   </button>
                   <input
                     className="flex-1 bg-transparent outline-none text-sm"
                     style={{ color: "#e2e8f0", fontFamily: "IBM Plex Sans, sans-serif" }}
-                    placeholder={`Написать в #${channel.name}...`}
+                    placeholder={replyTo ? `Ответить @${replyTo.user}...` : `Написать в #${channel.name}...`}
                     value={inputValue}
-                    onChange={e => setInputValue(e.target.value)}
-                    onKeyDown={e => e.key === "Enter" && sendMessage()}
+                    onChange={e => handleInputChange(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) sendMessage(); if (e.key === "Escape") { setReplyTo(null); setMentionOpen(false); } }}
                   />
                   <div className="flex items-center gap-1">
                     <button className="hover:opacity-70 transition-opacity"><Icon name="Smile" size={16} style={{ color: "#6b7fa3" }} /></button>
-                    <button onClick={() => fileInputRef.current?.click()} disabled={uploadingFile}
-                      className="p-1.5 rounded-lg cursor-pointer hover:opacity-80"
-                      style={{ background: "rgba(0,255,136,0.1)", color: "#00ff88", border: "none" }}
-                      title="Прикрепить файл">
-                      <Icon name={uploadingFile ? "Loader2" : "Paperclip"} size={16} />
-                    </button>
-                    <button onClick={sendMessage} className="w-7 h-7 rounded-lg flex items-center justify-center transition-all hover:opacity-90" style={{ background: "rgba(0,255,136,0.15)", color: "#00ff88" }}>
+                    <button onClick={sendMessage} disabled={!inputValue.trim()} className="w-7 h-7 rounded-lg flex items-center justify-center transition-all hover:opacity-90 disabled:opacity-30" style={{ background: "rgba(0,255,136,0.15)", color: "#00ff88" }}>
                       <Icon name="Send" size={13} />
                     </button>
                   </div>
@@ -1454,6 +1744,45 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
                   </span>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Правый сайдбар участников (показывается при showMembersSidebar в chat-режиме) */}
+          {activeTab === "chat" && showMembersSidebar && (
+            <div className="w-52 shrink-0 overflow-y-auto py-3 px-2" style={{ borderLeft: "1px solid rgba(0,255,136,0.08)", background: "var(--dark-panel)" }}>
+              {/* Онлайн */}
+              {onlineMembers.length > 0 && (
+                <div className="mb-3">
+                  <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", padding: "0 8px", marginBottom: "4px" }}>
+                    Онлайн — {onlineMembers.length}
+                  </div>
+                  {onlineMembers.map(m => (
+                    <div key={m.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white hover:bg-opacity-5 transition-colors cursor-pointer">
+                      <div className="relative">
+                        <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: m.avatar_color + "22", color: m.avatar_color, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "9px" }}>
+                          {m.username.slice(0,2).toUpperCase()}
+                        </div>
+                        <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2" style={{ background: "#00ff88", borderColor: "var(--dark-panel)" }} />
+                      </div>
+                      <span style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "12px", color: "#c8d6e8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.username}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Оффлайн */}
+              <div>
+                <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px", color: "#4a5568", textTransform: "uppercase", letterSpacing: "1px", padding: "0 8px", marginBottom: "4px" }}>
+                  Оффлайн — {MEMBERS.filter(m => m.status === "offline").length}
+                </div>
+                {MEMBERS.filter(m => m.status === "offline").slice(0, 10).map(m => (
+                  <div key={m.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white hover:bg-opacity-5 transition-colors cursor-pointer opacity-50">
+                    <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: m.color + "22", color: m.color, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "9px" }}>
+                      {m.avatar}
+                    </div>
+                    <span style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "12px", color: "#6b7fa3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

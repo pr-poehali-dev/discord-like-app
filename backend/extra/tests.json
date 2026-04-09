@@ -1,0 +1,20 @@
+{
+  "tests": [
+    {
+      "name": "GET typing list",
+      "method": "GET",
+      "path": "/?action=typing_list&channel_id=101&user_id=1",
+      "expectedStatus": 200,
+      "expectedBody": {"typing": []},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET pinned messages",
+      "method": "GET",
+      "path": "/?action=get_pinned&channel_id=101",
+      "expectedStatus": 200,
+      "expectedBody": {"pinned": []},
+      "bodyMatcher": "partial"
+    }
+  ]
+}

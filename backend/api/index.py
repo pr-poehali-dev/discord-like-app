@@ -1,4 +1,4 @@
-"""API: серверы, реакции, поиск — всё в одном endpoint через ?action="""
+"""API: серверы, реакции, поиск, typing, pinned, инвайты — всё через ?action="""
 import json, os, uuid, base64
 import psycopg2
 import boto3
