@@ -2,8 +2,11 @@ import { useState } from "react";
 import Icon from "@/components/ui/icon";
 
 interface ServerSettingsProps {
-  server: { id: number; name: string; abbr: string; color: string; members: number };
+  server: { id: number; name: string; abbr: string; color: string; members: number; owner_id?: number };
   onClose: () => void;
+  onDelete?: () => void;
+  currentUserId?: number;
+  currentUserRole?: string;
 }
 
 const SETTING_SECTIONS = [
@@ -86,7 +89,7 @@ const AUTOMOD_RULES = [
   { id: 6, name: "Анти-кейпслок", desc: "Сообщения целиком заглавными", enabled: true, action: "Предупреждение" },
 ];
 
-export default function ServerSettings({ server, onClose }: ServerSettingsProps) {
+export default function ServerSettings({ server, onClose, onDelete, currentUserId, currentUserRole }: ServerSettingsProps) {
   const [section, setSection] = useState("overview");
   const [serverName, setServerName] = useState(server.name);
   const [serverRegion, setServerRegion] = useState("EU-Central");
@@ -99,6 +102,11 @@ export default function ServerSettings({ server, onClose }: ServerSettingsProps)
   const [memberSearch, setMemberSearch] = useState("");
   const [confirmBan, setConfirmBan] = useState<number | null>(null);
   const [savedToast, setSavedToast] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const canDelete = currentUserId !== undefined && (
+    server.owner_id === currentUserId || currentUserRole === "admin"
+  );
 
   const showSaved = () => { setSavedToast(true); setTimeout(() => setSavedToast(false), 2000); };
 
@@ -235,6 +243,53 @@ export default function ServerSettings({ server, onClose }: ServerSettingsProps)
               <button onClick={showSaved} className="px-6 py-2.5 rounded-xl transition-all hover:opacity-90" style={{ background: "rgba(0,255,136,0.15)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.3)", ...rF, fontWeight: 700, fontSize: "14px" }}>
                 Сохранить изменения
               </button>
+
+              {/* Danger zone */}
+              {canDelete && (
+                <div className="p-5 rounded-2xl mt-2" style={{ background: "rgba(255,68,68,0.06)", border: "1px solid rgba(255,68,68,0.2)" }}>
+                  <div style={{ ...rF, fontWeight: 700, fontSize: "13px", color: "#ff4444", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "12px" }}>
+                    ⚠ Опасная зона
+                  </div>
+                  {!confirmDelete ? (
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div style={{ ...rF, fontWeight: 700, fontSize: "14px", color: "#e2e8f0" }}>Удалить сервер</div>
+                        <div style={{ ...iF, fontSize: "12px", color: "#6b7fa3", marginTop: "2px" }}>Это действие необратимо. Все данные будут потеряны.</div>
+                      </div>
+                      <button
+                        onClick={() => setConfirmDelete(true)}
+                        className="px-4 py-2 rounded-xl transition-all hover:opacity-90"
+                        style={{ background: "rgba(255,68,68,0.15)", color: "#ff4444", border: "1px solid rgba(255,68,68,0.35)", ...rF, fontWeight: 700, fontSize: "13px" }}>
+                        <Icon name="Trash2" size={14} style={{ display: "inline", marginRight: "6px" }} />
+                        Удалить сервер
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div style={{ ...rF, fontWeight: 700, fontSize: "15px", color: "#ff4444" }}>
+                        Вы уверены? Это действие нельзя отменить!
+                      </div>
+                      <div style={{ ...iF, fontSize: "13px", color: "#8899bb" }}>
+                        Сервер <span style={{ color: server.color, fontWeight: 700 }}>«{server.name}»</span> будет удалён навсегда.
+                      </div>
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => { onDelete?.(); onClose(); }}
+                          className="px-5 py-2 rounded-xl transition-all hover:opacity-90"
+                          style={{ background: "rgba(255,68,68,0.25)", color: "#ff4444", border: "1px solid rgba(255,68,68,0.5)", ...rF, fontWeight: 700, fontSize: "14px" }}>
+                          Да, удалить
+                        </button>
+                        <button
+                          onClick={() => setConfirmDelete(false)}
+                          className="px-5 py-2 rounded-xl transition-all hover:opacity-90"
+                          style={{ background: "rgba(255,255,255,0.06)", color: "#8899bb", border: "1px solid rgba(255,255,255,0.1)", ...rF, fontWeight: 700, fontSize: "14px" }}>
+                          Отмена
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

@@ -575,7 +575,24 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
     <audio ref={notifAudioRef} src="https://cdn.poehali.dev/projects/p25996638/bucket/notif.mp3" preload="auto" />
     <input type="file" ref={fileInputRef} className="hidden" accept="image/*,video/*,.pdf,.txt,.zip" onChange={e => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = ""; }} />
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--dark-bg)", fontFamily: "IBM Plex Sans, sans-serif" }}>
-      {showServerSettings && <ServerSettings server={server} onClose={() => setShowServerSettings(false)} />}
+      {showServerSettings && <ServerSettings
+        server={server}
+        onClose={() => setShowServerSettings(false)}
+        currentUserId={user.id}
+        currentUserRole={(server as { owner_id?: number }).owner_id === user.id ? "admin" : "member"}
+        onDelete={async () => {
+          try {
+            await fetch(API_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "remove_server", server_id: activeServer, user_id: user.id }),
+            });
+            setServers(prev => prev.filter(s => s.id !== activeServer));
+            const remaining = servers.filter(s => s.id !== activeServer);
+            if (remaining.length > 0) switchServer(remaining[0].id);
+          } catch { /* silent */ }
+        }}
+      />}
       {showUserSettings && <UserSettings user={user} avatarImg={avatarImg} onAvatarChange={onAvatarChange} onClose={() => setShowUserSettings(false)} onLogout={onLogout} />}
       {showCreateServer && <CreateServerModal onClose={() => setShowCreateServer(false)} onCreate={async (s) => {
         const res = await fetch(API_URL, {

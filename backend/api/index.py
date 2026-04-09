@@ -102,6 +102,29 @@ def handler(event: dict, context) -> dict:
                 {"id": r[0], "name": r[1], "abbr": r[2], "color": r[3], "owner_id": r[4], "members": r[5]}
             )}
 
+        if action == "remove_server":
+            server_id = int(body.get("server_id"))
+            user_id = int(body.get("user_id"))
+            cur.execute(f"SELECT owner_id FROM {SCHEMA}.servers WHERE id=%s", (server_id,))
+            row = cur.fetchone()
+            if not row:
+                return {"statusCode": 404, "headers": cors(), "body": json.dumps({"error": "not found"})}
+            cur.execute(
+                f"SELECT role FROM {SCHEMA}.server_members WHERE server_id=%s AND user_id=%s",
+                (server_id, user_id)
+            )
+            member = cur.fetchone()
+            is_owner = row[0] == user_id
+            is_admin = member and member[0] == "admin"
+            if not is_owner and not is_admin:
+                return {"statusCode": 403, "headers": cors(), "body": json.dumps({"error": "forbidden"})}
+            cur.execute(f"UPDATE {SCHEMA}.messages SET is_removed=TRUE WHERE server_id=%s", (server_id,))
+            cur.execute(f"UPDATE {SCHEMA}.channels SET locked=TRUE WHERE server_id=%s", (server_id,))
+            cur.execute(f"UPDATE {SCHEMA}.server_members SET role='removed' WHERE server_id=%s", (server_id,))
+            cur.execute(f"UPDATE {SCHEMA}.servers SET name=CONCAT('[DELETED] ', name) WHERE id=%s", (server_id,))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({"ok": True})}
+
         if action == "get_channels":
             server_id = int(params.get("server_id") or body.get("server_id"))
             cur.execute(
