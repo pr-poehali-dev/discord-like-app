@@ -1,0 +1,327 @@
+import { useState, useRef, useEffect, useCallback } from "react";
+import type { AudioDevice } from "./useWebRTC";
+
+const API_URL = "https://functions.poehali.dev/34ebed0a-100a-450c-8c07-780342df2a96";
+
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+  ],
+};
+
+export interface VoiceChannelState {
+  localStream: MediaStream | null;
+  audioDevices: AudioDevice[];
+  outputDevices: AudioDevice[];
+  selectedMic: string;
+  selectedSpeaker: string;
+  setMicMuted: (v: boolean) => void;
+  setDeafened: (v: boolean) => void;
+  selectMic: (id: string) => Promise<void>;
+  selectSpeaker: (id: string) => void;
+  refreshDevices: () => Promise<void>;
+  connectedPeers: number;
+}
+
+interface Options {
+  userId: number;
+  channelId: number | null;
+  micMuted: boolean;
+  deafened: boolean;
+}
+
+export function useVoiceChannel({ userId, channelId, micMuted, deafened }: Options): VoiceChannelState {
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
+  const [outputDevices, setOutputDevices] = useState<AudioDevice[]>([]);
+  const [selectedMic, setSelectedMic] = useState("default");
+  const [selectedSpeaker, setSelectedSpeaker] = useState("default");
+  const [connectedPeers, setConnectedPeers] = useState(0);
+
+  // peer_user_id -> RTCPeerConnection
+  const peersRef = useRef<Map<number, RTCPeerConnection>>(new Map());
+  // peer_user_id -> HTMLAudioElement
+  const audioElemsRef = useRef<Map<number, HTMLAudioElement>>(new Map());
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const selectedMicRef = useRef("default");
+  const selectedSpeakerRef = useRef("default");
+  const deafenedRef = useRef(deafened);
+  const channelIdRef = useRef(channelId);
+
+  selectedMicRef.current = selectedMic;
+  selectedSpeakerRef.current = selectedSpeaker;
+  deafenedRef.current = deafened;
+  channelIdRef.current = channelId;
+
+  // ── Устройства ──────────────────────────────────────────
+  const refreshDevices = useCallback(async () => {
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(s => s.getTracks().forEach(t => t.stop()))
+        .catch(() => {});
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      setAudioDevices(devs.filter(d => d.kind === "audioinput").map(d => ({
+        deviceId: d.deviceId,
+        label: d.label || `Микрофон ${d.deviceId.slice(0, 6)}`,
+        kind: d.kind,
+      })));
+      setOutputDevices(devs.filter(d => d.kind === "audiooutput").map(d => ({
+        deviceId: d.deviceId,
+        label: d.label || `Динамик ${d.deviceId.slice(0, 6)}`,
+        kind: d.kind,
+      })));
+    } catch { /* silent */ }
+  }, []);
+
+  // ── Получить локальный поток ────────────────────────────
+  const getLocalStream = useCallback(async (micId?: string): Promise<MediaStream | null> => {
+    try {
+      const id = micId ?? selectedMicRef.current;
+      const constraint = id && id !== "default" ? { deviceId: { exact: id } } : true;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: constraint, video: false });
+      stream.getAudioTracks().forEach(t => { t.enabled = !micMuted; });
+      return stream;
+    } catch { return null; }
+  }, [micMuted]);
+
+  // ── Отправить сигнал ────────────────────────────────────
+  const sendSignal = useCallback(async (toUserId: number, type: string, payload: object) => {
+    if (!channelIdRef.current) return;
+    await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "voice_signal",
+        channel_id: channelIdRef.current,
+        from_user_id: userId,
+        to_user_id: toUserId,
+        type,
+        payload: JSON.stringify(payload),
+      }),
+    }).catch(() => {});
+  }, [userId]);
+
+  // ── Создать PeerConnection с конкретным участником ──────
+  const createPeer = useCallback((remoteUserId: number, stream: MediaStream, initiator: boolean) => {
+    if (peersRef.current.has(remoteUserId)) {
+      peersRef.current.get(remoteUserId)?.close();
+      peersRef.current.delete(remoteUserId);
+    }
+
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+    peersRef.current.set(remoteUserId, pc);
+
+    stream.getTracks().forEach(t => pc.addTrack(t, stream));
+
+    pc.ontrack = (e) => {
+      const [remoteStream] = e.streams;
+      let audio = audioElemsRef.current.get(remoteUserId);
+      if (!audio) {
+        audio = new Audio();
+        audio.autoplay = true;
+        audioElemsRef.current.set(remoteUserId, audio);
+      }
+      audio.srcObject = remoteStream;
+      audio.muted = deafenedRef.current;
+      const spk = selectedSpeakerRef.current;
+      if (spk !== "default" && "setSinkId" in audio) {
+        (audio as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> })
+          .setSinkId(spk).catch(() => {});
+      }
+      setConnectedPeers(peersRef.current.size);
+    };
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate) sendSignal(remoteUserId, "ice", { candidate: e.candidate });
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+        peersRef.current.delete(remoteUserId);
+        audioElemsRef.current.get(remoteUserId)?.pause();
+        audioElemsRef.current.delete(remoteUserId);
+        setConnectedPeers(peersRef.current.size);
+      }
+    };
+
+    if (initiator) {
+      pc.createOffer({ offerToReceiveAudio: true })
+        .then(offer => pc.setLocalDescription(offer).then(() => sendSignal(remoteUserId, "offer", offer)))
+        .catch(() => {});
+    }
+
+    return pc;
+  }, [sendSignal]);
+
+  // ── Polling сигналов ────────────────────────────────────
+  const pollSignals = useCallback(async () => {
+    const cid = channelIdRef.current;
+    if (!cid || !localStreamRef.current) return;
+
+    let data: { signals?: { id: number; from: number; type: string; payload: string }[] };
+    try {
+      const res = await fetch(`${API_URL}?action=voice_signal_poll&channel_id=${cid}&user_id=${userId}`);
+      data = await res.json();
+    } catch { return; }
+
+    if (!data.signals?.length) return;
+
+    for (const sig of data.signals) {
+      const fromId = sig.from;
+      let payload: RTCSessionDescriptionInit | { candidate: RTCIceCandidateInit };
+      try { payload = JSON.parse(sig.payload); } catch { continue; }
+
+      let pc = peersRef.current.get(fromId);
+
+      if (sig.type === "offer") {
+        // Входящий offer — создаём PC как принимающий и отвечаем
+        pc = createPeer(fromId, localStreamRef.current!, false);
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription(payload as RTCSessionDescriptionInit));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          await sendSignal(fromId, "answer", answer);
+        } catch { /* silent */ }
+
+      } else if (sig.type === "answer" && pc) {
+        if (pc.signalingState === "have-local-offer") {
+          try { await pc.setRemoteDescription(new RTCSessionDescription(payload as RTCSessionDescriptionInit)); } catch { /* silent */ }
+        }
+
+      } else if (sig.type === "ice" && pc) {
+        const { candidate } = payload as { candidate: RTCIceCandidateInit };
+        if (candidate) {
+          try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch { /* stale */ }
+        }
+
+      } else if (sig.type === "join") {
+        // Новый участник зашёл — мы инициируем к нему offer
+        if (!pc && localStreamRef.current) {
+          createPeer(fromId, localStreamRef.current, true);
+        }
+      }
+    }
+  }, [userId, createPeer, sendSignal]);
+
+  // ── Инициализация при заходе в канал ───────────────────
+  useEffect(() => {
+    if (!channelId || !userId) return;
+    let cancelled = false;
+
+    const init = async () => {
+      await refreshDevices();
+      const stream = await getLocalStream(selectedMicRef.current);
+      if (!stream || cancelled) return;
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+
+      // Оповещаем других о входе
+      await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "voice_signal",
+          channel_id: channelId,
+          from_user_id: userId,
+          to_user_id: -1, // broadcast — обрабатывается polling
+          type: "join",
+          payload: JSON.stringify({ user_id: userId }),
+        }),
+      }).catch(() => {});
+
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(pollSignals, 600);
+    };
+
+    init();
+    return () => {
+      cancelled = true;
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      peersRef.current.forEach(pc => pc.close());
+      peersRef.current.clear();
+      audioElemsRef.current.forEach(a => { a.pause(); a.srcObject = null; });
+      audioElemsRef.current.clear();
+      localStreamRef.current?.getTracks().forEach(t => t.stop());
+      localStreamRef.current = null;
+      setLocalStream(null);
+      setConnectedPeers(0);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelId, userId]);
+
+  // ── Мут/анмут ───────────────────────────────────────────
+  const setMicMuted = useCallback((v: boolean) => {
+    localStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !v; });
+  }, []);
+
+  // ── Деафен ──────────────────────────────────────────────
+  const setDeafened = useCallback((v: boolean) => {
+    audioElemsRef.current.forEach(a => { a.muted = v; });
+  }, []);
+
+  // ── Смена микрофона на лету ─────────────────────────────
+  const selectMic = useCallback(async (id: string) => {
+    setSelectedMic(id);
+    selectedMicRef.current = id;
+    const constraint = id !== "default" ? { deviceId: { exact: id } } : true;
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({ audio: constraint, video: false });
+      const newTrack = newStream.getAudioTracks()[0];
+      // Заменяем трек во всех PC
+      peersRef.current.forEach(pc => {
+        const sender = pc.getSenders().find(s => s.track?.kind === "audio");
+        if (sender) sender.replaceTrack(newTrack).catch(() => {});
+      });
+      localStreamRef.current?.getAudioTracks().forEach(t => t.stop());
+      const updated = new MediaStream([newTrack]);
+      localStreamRef.current = updated;
+      setLocalStream(updated);
+    } catch { /* silent */ }
+  }, []);
+
+  // ── Смена динамика ──────────────────────────────────────
+  const selectSpeaker = useCallback((id: string) => {
+    setSelectedSpeaker(id);
+    selectedSpeakerRef.current = id;
+    audioElemsRef.current.forEach(a => {
+      if ("setSinkId" in a) {
+        (a as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> }).setSinkId(id).catch(() => {});
+      }
+    });
+  }, []);
+
+  // Обновляем мут при изменении снаружи
+  useEffect(() => {
+    localStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !micMuted; });
+  }, [micMuted]);
+
+  // Обновляем деафен при изменении снаружи
+  useEffect(() => {
+    audioElemsRef.current.forEach(a => { a.muted = deafened; });
+  }, [deafened]);
+
+  // Слушаем devicechange
+  useEffect(() => {
+    navigator.mediaDevices.addEventListener("devicechange", refreshDevices);
+    refreshDevices();
+    return () => navigator.mediaDevices.removeEventListener("devicechange", refreshDevices);
+  }, [refreshDevices]);
+
+  return {
+    localStream,
+    audioDevices,
+    outputDevices,
+    selectedMic,
+    selectedSpeaker,
+    setMicMuted,
+    setDeafened,
+    selectMic,
+    selectSpeaker,
+    refreshDevices,
+    connectedPeers,
+  };
+}

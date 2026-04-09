@@ -10,8 +10,8 @@ import DMView from "@/components/DMView";
 import ProfileModal from "@/components/ProfileModal";
 import UserAvatar from "@/components/UserAvatar";
 import AudioDevicePicker from "@/components/AudioDevicePicker";
-import { useWebRTC } from "@/hooks/useWebRTC";
 import { useMicLevel } from "@/hooks/useMicLevel";
+import { useVoiceChannel } from "@/hooks/useVoiceChannel";
 
 const MESSAGES_URL = "https://functions.poehali.dev/bd122cd3-cf73-44cb-b4a3-4b1eb3cfdaac";
 const API_URL = "https://functions.poehali.dev/34ebed0a-100a-450c-8c07-780342df2a96";
@@ -324,7 +324,6 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [hasVideo, setHasVideo] = useState(false);
-  const [showVoiceDevicePicker, setShowVoiceDevicePicker] = useState(false);
   const [forumThreads, setForumThreads] = useState<{ id: number; title: string; content: string; author_name: string; avatar_color: string; tags?: string; pinned?: boolean; locked?: boolean; created_at: string; reply_count: number }[]>([]);
   const [activeForumChannel, setActiveForumChannel] = useState<number | null>(null);
   const [activeThread, setActiveThread] = useState<{ id: number; title: string; content: string; author_name: string; avatar_color: string; tags?: string; pinned?: boolean; locked?: boolean; created_at: string; reply_count: number } | null>(null);
@@ -370,17 +369,16 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   const activeVoiceChannelRef = useRef<number | null>(null);
   const activeServerRef = useRef<number>(1);
 
-  // WebRTC для голосовых каналов (без call_id — каналы не используют p2p сигналинг, только устройства)
-  const voiceWebRTC = useWebRTC({
+  // Голосовой канал — WebRTC mesh + управление устройствами
+  const voiceChannel = useVoiceChannel({
     userId: user?.id ?? 0,
-    callId: null,
-    remoteUserId: null,
-    isInitiator: false,
-    withVideo: hasVideo,
+    channelId: activeVoiceChannel,
+    micMuted,
+    deafened: headphonesDeaf,
   });
 
   // Уровень громкости микрофона (0..1)
-  const micLevel = useMicLevel(myStream, micMuted);
+  const micLevel = useMicLevel(voiceChannel.localStream ?? myStream, micMuted);
 
   // Синхронизация refs с актуальными state-значениями
   micMutedRef.current = micMuted;
@@ -474,6 +472,11 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
     fetchServers();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Синхронизируем myStream из хука голосового канала
+  useEffect(() => {
+    if (voiceChannel.localStream) setMyStream(voiceChannel.localStream);
+  }, [voiceChannel.localStream]);
 
   useEffect(() => {
     fetchChannels(activeServer);
@@ -839,13 +842,7 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
     }
     if (activeVoiceChannelRef.current) await leaveVoiceChannel();
 
-    try {
-      const micId = voiceWebRTC.selectedMic;
-      const audioConstraint = micId && micId !== "default" ? { deviceId: { exact: micId } } : true;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint, video: false });
-      setMyStream(stream);
-      stream.getAudioTracks().forEach(t => { t.enabled = !micMutedRef.current; });
-    } catch { /* нет микрофона — продолжаем без него */ }
+    // Поток теперь управляется хуком useVoiceChannel — myStream синхронизируется через useEffect ниже
 
     const serverId = activeServerRef.current;
     await fetch(API_URL, {
@@ -885,9 +882,9 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
     const cid = activeVoiceChannelRef.current;
     if (!cid) return;
     if (voicePingRef.current) { clearInterval(voicePingRef.current); voicePingRef.current = null; }
-    setMyStream(prev => { prev?.getTracks().forEach(t => t.stop()); return null; });
     setScreenStream(prev => { prev?.getTracks().forEach(t => t.stop()); return null; });
     setIsStreaming(false);
+    setMyStream(null);
     await fetch(API_URL, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "voice_leave", server_id: activeServerRef.current, channel_id: cid, user_id: user.id }),
@@ -1221,13 +1218,20 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
         {/* Активный голосовой канал */}
         {activeVoiceChannel && (
           <div className="mx-2 mb-1 px-2 py-2 rounded-xl" style={{ background: "rgba(0,255,136,0.08)", border: "1px solid rgba(0,255,136,0.15)" }}>
+            {/* Шапка */}
             <div className="flex items-center gap-2 mb-1">
               <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: "#00ff88" }} />
-              <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "11px", color: "#00ff88" }}>Голосовой чат</span>
+              <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "11px", color: "#00ff88", flex: 1 }}>Голосовой чат</span>
+              {voiceChannel.connectedPeers > 0 && (
+                <span style={{ fontFamily: "Rajdhani, sans-serif", fontSize: "10px", color: "#00ff88", background: "rgba(0,255,136,0.15)", padding: "1px 5px", borderRadius: "4px" }}>
+                  {voiceChannel.connectedPeers} 🔊
+                </span>
+              )}
             </div>
             <div style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "11px", color: "#6b7fa3", marginBottom: "6px" }}>
               {sData.channels.voice.find(c => c.id === activeVoiceChannel)?.name}
             </div>
+
             {/* Индикатор уровня микрофона */}
             <div className="flex items-center gap-1.5 mb-2">
               <Icon name={micMuted ? "MicOff" : "Mic"} size={10} style={{ color: micMuted ? "#ff4444" : "#00ff88", flexShrink: 0 }} />
@@ -1236,16 +1240,44 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
                   const threshold = (i + 1) / 16;
                   const active = !micMuted && micLevel >= threshold;
                   const color = i < 10 ? "#00ff88" : i < 13 ? "#ffcc00" : "#ff4444";
-                  return (
-                    <div key={i} style={{
-                      flex: 1, height: "6px", borderRadius: "2px",
-                      background: active ? color : "rgba(255,255,255,0.07)",
-                      transition: "background 80ms",
-                    }} />
-                  );
+                  return <div key={i} style={{ flex: 1, height: "6px", borderRadius: "2px", background: active ? color : "rgba(255,255,255,0.07)", transition: "background 80ms" }} />;
                 })}
               </div>
             </div>
+
+            {/* Выбор микрофона */}
+            {voiceChannel.audioDevices.length > 0 && (
+              <div className="mb-1.5">
+                <div style={{ fontFamily: "Rajdhani, sans-serif", fontSize: "9px", color: "#4a5568", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: "3px" }}>Микрофон</div>
+                <select
+                  value={voiceChannel.selectedMic}
+                  onChange={e => voiceChannel.selectMic(e.target.value)}
+                  className="w-full rounded-lg px-2 py-1 text-xs"
+                  style={{ background: "#0d1424", border: "1px solid rgba(255,255,255,0.08)", color: "#8899bb", fontFamily: "IBM Plex Sans, sans-serif", fontSize: "11px", outline: "none" }}>
+                  {voiceChannel.audioDevices.map(d => (
+                    <option key={d.deviceId} value={d.deviceId}>{d.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Выбор динамика */}
+            {voiceChannel.outputDevices.length > 0 && (
+              <div className="mb-2">
+                <div style={{ fontFamily: "Rajdhani, sans-serif", fontSize: "9px", color: "#4a5568", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: "3px" }}>Динамик</div>
+                <select
+                  value={voiceChannel.selectedSpeaker}
+                  onChange={e => voiceChannel.selectSpeaker(e.target.value)}
+                  className="w-full rounded-lg px-2 py-1 text-xs"
+                  style={{ background: "#0d1424", border: "1px solid rgba(255,255,255,0.08)", color: "#8899bb", fontFamily: "IBM Plex Sans, sans-serif", fontSize: "11px", outline: "none" }}>
+                  {voiceChannel.outputDevices.map(d => (
+                    <option key={d.deviceId} value={d.deviceId}>{d.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Кнопки управления */}
             <div className="flex gap-1.5">
               <button onClick={() => setMicMuted(v => !v)} className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity"
                 style={{ background: micMuted ? "rgba(255,68,68,0.2)" : "rgba(0,255,136,0.12)", color: micMuted ? "#ff4444" : "#00ff88" }} title={micMuted ? "Включить микрофон" : "Выключить микрофон"}>
@@ -1254,11 +1286,6 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
               <button onClick={() => setHeadphonesDeaf(v => !v)} className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity"
                 style={{ background: headphonesDeaf ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.06)", color: headphonesDeaf ? "#ff4444" : "#6b7fa3" }} title={headphonesDeaf ? "Включить звук" : "Выключить звук"}>
                 <Icon name={headphonesDeaf ? "VolumeX" : "Headphones"} size={13} />
-              </button>
-              <button onClick={() => { voiceWebRTC.refreshDevices(); setShowVoiceDevicePicker(true); }}
-                className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity"
-                style={{ background: "rgba(255,255,255,0.06)", color: "#6b7fa3" }} title="Настройки устройств">
-                <Icon name="Settings2" size={13} />
               </button>
               <button onClick={leaveVoiceChannel} className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity ml-auto"
                 style={{ background: "rgba(255,68,68,0.15)", color: "#ff4444" }} title="Покинуть канал">
@@ -2159,36 +2186,7 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
       )}
     </div>
 
-    {/* Выбор устройств для голосовых каналов */}
-    {showVoiceDevicePicker && (
-      <AudioDevicePicker
-        audioDevices={voiceWebRTC.audioDevices}
-        videoDevices={voiceWebRTC.videoDevices}
-        outputDevices={voiceWebRTC.outputDevices}
-        selectedMic={voiceWebRTC.selectedMic}
-        selectedCamera={voiceWebRTC.selectedCamera}
-        selectedSpeaker={voiceWebRTC.selectedSpeaker}
-        onSelectMic={async (id) => {
-          voiceWebRTC.selectMic(id);
-          // Если уже в канале — переключаем микрофон в живом потоке
-          if (myStream) {
-            try {
-              const constraint = id !== "default" ? { deviceId: { exact: id } } : true;
-              const newS = await navigator.mediaDevices.getUserMedia({ audio: constraint, video: false });
-              const newTrack = newS.getAudioTracks()[0];
-              myStream.getAudioTracks().forEach(t => t.stop());
-              const updated = new MediaStream([newTrack, ...myStream.getVideoTracks()]);
-              newTrack.enabled = !micMuted;
-              setMyStream(updated);
-            } catch { /* silent */ }
-          }
-        }}
-        onSelectCamera={voiceWebRTC.selectCamera}
-        onSelectSpeaker={voiceWebRTC.selectSpeaker}
-        withVideo={false}
-        onClose={() => setShowVoiceDevicePicker(false)}
-      />
-    )}
+
     </>
   );
 }
