@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import Icon from "@/components/ui/icon";
 import UserAvatar from "@/components/UserAvatar";
+import IncomingCall from "@/components/IncomingCall";
 
 const DM_URL = "https://functions.poehali.dev/b026ce37-f295-45e6-9d62-287d071942eb";
 const ONLINE_URL = "https://functions.poehali.dev/66112eb3-a471-46d1-b43a-c46fa78fbe18";
@@ -116,7 +117,7 @@ export default function DMView({
   const [sidebarSearch, setSidebarSearch] = useState("");
   // Загрузка
   const [loadingMsgs, setLoadingMsgs] = useState(false);
-  // Звонок
+  // Звонок (исходящий)
   const [callActive, setCallActive] = useState(false);
   const [callVideo, setCallVideo] = useState(false);
   const [callMuted, setCallMuted] = useState(false);
@@ -125,6 +126,10 @@ export default function DMView({
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [screenShareStream, setScreenShareStream] = useState<MediaStream | null>(null);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [outgoingCallId, setOutgoingCallId] = useState<number | null>(null);
+  const [outgoingCallStatus, setOutgoingCallStatus] = useState<"ringing" | "accepted" | "declined" | "cancelled">("ringing");
+  // Входящий звонок
+  const [incomingCall, setIncomingCall] = useState<{ call_id: number; caller_id: number; caller_name: string; caller_color: string; call_type: "audio" | "video" } | null>(null);
 
   const msgsEndRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -133,6 +138,8 @@ export default function DMView({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const callPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const outgoingCallPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const screenVideoRef = useRef<HTMLVideoElement | null>(null);
 
   // ── Загрузка диалогов ──────────────────────────────────
@@ -157,13 +164,63 @@ export default function DMView({
     } catch { /* silent */ }
   }, [user.id]);
 
+  // ── Polling входящих звонков ───────────────────────────
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const res = await fetch(`${DM_URL}?action=call_poll&user_id=${user.id}`);
+        const data = await res.json();
+        if (data.incoming && !callActive) {
+          setIncomingCall(data.incoming);
+        }
+      } catch { /* silent */ }
+    };
+    poll();
+    callPollRef.current = setInterval(poll, 3000);
+    return () => { if (callPollRef.current) clearInterval(callPollRef.current); };
+  }, [user.id, callActive]);
+
   // ── Звонок ─────────────────────────────────────────────
   const startCall = async (withVideo = false) => {
+    if (!activeConvo) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo });
       setLocalStream(stream);
       if (withVideo && localVideoRef.current) localVideoRef.current.srcObject = stream;
     } catch { /* нет устройств */ }
+
+    // Отправить приглашение через backend
+    try {
+      const res = await fetch(DM_URL, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "call_invite", caller_id: user.id, callee_id: activeConvo.user_id,
+          caller_name: user.username, caller_color: user.avatar_color,
+          call_type: withVideo ? "video" : "audio",
+        }),
+      });
+      const data = await res.json();
+      if (data.call_id) {
+        setOutgoingCallId(data.call_id);
+        setOutgoingCallStatus("ringing");
+        // Следим за статусом исходящего звонка
+        outgoingCallPollRef.current = setInterval(async () => {
+          try {
+            const r = await fetch(`${DM_URL}?action=call_status&call_id=${data.call_id}`);
+            const d = await r.json();
+            if (d.status === "accepted") {
+              setOutgoingCallStatus("accepted");
+              if (outgoingCallPollRef.current) clearInterval(outgoingCallPollRef.current);
+            } else if (d.status === "declined" || d.status === "cancelled") {
+              setOutgoingCallStatus(d.status);
+              if (outgoingCallPollRef.current) clearInterval(outgoingCallPollRef.current);
+              setTimeout(() => endCall(), 2000);
+            }
+          } catch { /* silent */ }
+        }, 2000);
+      }
+    } catch { /* silent */ }
+
     setCallActive(true);
     setCallVideo(withVideo);
     setCallMuted(false);
@@ -174,11 +231,53 @@ export default function DMView({
 
   const endCall = () => {
     if (callTimerRef.current) { clearInterval(callTimerRef.current); callTimerRef.current = null; }
+    if (outgoingCallPollRef.current) { clearInterval(outgoingCallPollRef.current); outgoingCallPollRef.current = null; }
     if (localStream) { localStream.getTracks().forEach(t => t.stop()); setLocalStream(null); }
     if (screenShareStream) { screenShareStream.getTracks().forEach(t => t.stop()); setScreenShareStream(null); setIsScreenSharing(false); }
+    // Отменяем исходящий если был
+    if (outgoingCallId) {
+      fetch(DM_URL, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "call_answer", call_id: outgoingCallId, answer: "cancel" }),
+      }).catch(() => {});
+      setOutgoingCallId(null);
+    }
     setCallActive(false);
     setCallVideo(false);
     setCallTimer(0);
+    setOutgoingCallStatus("ringing");
+  };
+
+  const acceptIncomingCall = async () => {
+    if (!incomingCall) return;
+    await fetch(DM_URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "call_answer", call_id: incomingCall.call_id, answer: "accept" }),
+    }).catch(() => {});
+    // Открываем диалог с caller и начинаем звонок
+    const convo = {
+      user_id: incomingCall.caller_id, username: incomingCall.caller_name,
+      avatar_color: incomingCall.caller_color, status: "online",
+      last_msg: "", last_time: "", is_online: true,
+    };
+    setActiveConvo(convo);
+    setIncomingCall(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: incomingCall.call_type === "video" });
+      setLocalStream(stream);
+    } catch { /* нет устройств */ }
+    setCallActive(true);
+    setCallVideo(incomingCall.call_type === "video");
+    setCallTimer(0);
+    callTimerRef.current = setInterval(() => setCallTimer(t => t + 1), 1000);
+  };
+
+  const declineIncomingCall = async () => {
+    if (!incomingCall) return;
+    await fetch(DM_URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "call_answer", call_id: incomingCall.call_id, answer: "decline" }),
+    }).catch(() => {});
+    setIncomingCall(null);
   };
 
   const toggleCallMic = () => {
@@ -191,7 +290,7 @@ export default function DMView({
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
       setScreenShareStream(stream);
       setIsScreenSharing(true);
-      if (screenVideoRef.current) screenVideoRef.current.srcObject = stream;
+      setTimeout(() => { if (screenVideoRef.current) screenVideoRef.current.srcObject = stream; }, 100);
       stream.getVideoTracks()[0].onended = () => { setScreenShareStream(null); setIsScreenSharing(false); };
     } catch { /* отмена */ }
   };
@@ -386,6 +485,17 @@ export default function DMView({
     <div className="flex h-screen overflow-hidden" style={{ fontFamily: "IBM Plex Sans, sans-serif", background: "var(--dark-bg)" }}
       onClick={() => { setMenuMsgId(null); setEmojiPickerMsgId(null); }}>
 
+      {/* Входящий звонок */}
+      {incomingCall && !callActive && (
+        <IncomingCall
+          callerName={incomingCall.caller_name}
+          callerColor={incomingCall.caller_color}
+          callType={incomingCall.call_type}
+          onAccept={acceptIncomingCall}
+          onDecline={declineIncomingCall}
+        />
+      )}
+
       {/* Сайдбар */}
       <div className="flex flex-col w-60 shrink-0" style={{ background: "var(--dark-panel)", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
 
@@ -507,7 +617,14 @@ export default function DMView({
             <div className="ml-auto flex items-center gap-2">
               {callActive ? (
                 <>
-                  <span style={{ ...rF, fontWeight: 700, fontSize: "13px", color: "#00ff88" }}>{fmtTime(callTimer)}</span>
+                  {/* Статус звонка */}
+                  {outgoingCallStatus === "ringing" && outgoingCallId ? (
+                    <span style={{ ...iF, fontSize: "12px", color: "#6b7fa3" }} className="animate-pulse">Вызов...</span>
+                  ) : outgoingCallStatus === "declined" ? (
+                    <span style={{ ...iF, fontSize: "12px", color: "#ff4444" }}>Отклонён</span>
+                  ) : (
+                    <span style={{ ...rF, fontWeight: 700, fontSize: "13px", color: "#00ff88" }}>{fmtTime(callTimer)}</span>
+                  )}
                   <button onClick={toggleCallMic} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
                     style={{ background: callMuted ? "rgba(255,68,68,0.2)" : "rgba(0,255,136,0.1)", color: callMuted ? "#ff4444" : "#00ff88" }} title={callMuted ? "Включить микрофон" : "Выключить микрофон"}>
                     <Icon name={callMuted ? "MicOff" : "Mic"} size={15} />

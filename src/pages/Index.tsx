@@ -282,7 +282,6 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   const [expandText, setExpandText] = useState(true);
   const [expandVoice, setExpandVoice] = useState(true);
   const [expandForum, setExpandForum] = useState(false);
-  const [streamActive, setStreamActive] = useState(false);
   const [serverMessages, setServerMessages] = useState<Record<number, Record<number, Msg[]>>>(
     Object.fromEntries(Object.entries(SERVER_DATA).map(([sid, data]) => [Number(sid), { ...data.messages }]))
   );
@@ -332,6 +331,19 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   const voicePingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const screenVideoRef = useRef<HTMLVideoElement | null>(null);
+  // Refs для актуальных значений в замыкании voicePingRef
+  const micMutedRef = useRef(false);
+  const headphonesDeafRef = useRef(false);
+  const isStreamingRef = useRef(false);
+  const activeVoiceChannelRef = useRef<number | null>(null);
+  const activeServerRef = useRef<number>(1);
+
+  // Синхронизация refs с актуальными state-значениями
+  micMutedRef.current = micMuted;
+  headphonesDeafRef.current = headphonesDeaf;
+  isStreamingRef.current = isStreaming;
+  activeVoiceChannelRef.current = activeVoiceChannel;
+  activeServerRef.current = activeServer;
 
   const server = servers.find(s => s.id === activeServer) || servers[0];
   const sData = SERVER_DATA[activeServer] || SERVER_DATA[1];
@@ -600,47 +612,61 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
 
   // Войти в голосовой канал
   const joinVoiceChannel = async (channelId: number) => {
-    if (activeVoiceChannel === channelId) {
+    if (activeVoiceChannelRef.current === channelId) {
       await leaveVoiceChannel();
       return;
     }
-    if (activeVoiceChannel) await leaveVoiceChannel();
+    if (activeVoiceChannelRef.current) await leaveVoiceChannel();
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       setMyStream(stream);
-      stream.getAudioTracks().forEach(t => { t.enabled = !micMuted; });
+      stream.getAudioTracks().forEach(t => { t.enabled = !micMutedRef.current; });
     } catch { /* нет микрофона — продолжаем без него */ }
 
+    const serverId = activeServerRef.current;
     await fetch(API_URL, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "voice_join", server_id: activeServer, channel_id: channelId, user_id: user.id, username: user.username, avatar_color: user.avatar_color }),
+      body: JSON.stringify({ action: "voice_join", server_id: serverId, channel_id: channelId, user_id: user.id, username: user.username, avatar_color: user.avatar_color }),
     }).catch(() => {});
 
     setActiveVoiceChannel(channelId);
     setActiveTab("voice");
 
-    if (voicePingRef.current) clearInterval(voicePingRef.current);
-    voicePingRef.current = setInterval(async () => {
+    // Немедленно загружаем список участников
+    const doVoiceSync = async () => {
+      const cid = activeVoiceChannelRef.current;
+      const sid = activeServerRef.current;
+      if (!cid) return;
       await fetch(API_URL, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "voice_ping", server_id: activeServer, channel_id: channelId, user_id: user.id, muted: micMuted, deafened: headphonesDeaf, streaming: isStreaming, video: hasVideo }),
+        body: JSON.stringify({
+          action: "voice_ping", server_id: sid, channel_id: cid, user_id: user.id,
+          muted: micMutedRef.current, deafened: headphonesDeafRef.current,
+          streaming: isStreamingRef.current, video: false,
+        }),
       }).catch(() => {});
-      const res = await fetch(`${API_URL}?action=voice_list&server_id=${activeServer}`);
-      const data = await res.json().catch(() => ({}));
+      const res = await fetch(`${API_URL}?action=voice_list&server_id=${sid}`).catch(() => null);
+      const data = await res?.json().catch(() => ({})) || {};
       if (data.channels) setVoiceParticipants(data.channels);
-    }, 4000);
+    };
+
+    doVoiceSync();
+    if (voicePingRef.current) clearInterval(voicePingRef.current);
+    voicePingRef.current = setInterval(doVoiceSync, 5000);
   };
 
   // Выйти из голосового канала
   const leaveVoiceChannel = async () => {
-    if (!activeVoiceChannel) return;
+    const cid = activeVoiceChannelRef.current;
+    if (!cid) return;
     if (voicePingRef.current) { clearInterval(voicePingRef.current); voicePingRef.current = null; }
-    if (myStream) { myStream.getTracks().forEach(t => t.stop()); setMyStream(null); }
-    if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); setScreenStream(null); setIsStreaming(false); }
+    setMyStream(prev => { prev?.getTracks().forEach(t => t.stop()); return null; });
+    setScreenStream(prev => { prev?.getTracks().forEach(t => t.stop()); return null; });
+    setIsStreaming(false);
     await fetch(API_URL, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "voice_leave", server_id: activeServer, channel_id: activeVoiceChannel, user_id: user.id }),
+      body: JSON.stringify({ action: "voice_leave", server_id: activeServerRef.current, channel_id: cid, user_id: user.id }),
     }).catch(() => {});
     setActiveVoiceChannel(null);
     setVoiceParticipants({});
@@ -649,12 +675,14 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
 
   // Начать стриминг экрана
   const startScreenShare = async () => {
+    if (!activeVoiceChannelRef.current) return;
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       setScreenStream(stream);
       setIsStreaming(true);
       stream.getVideoTracks()[0].onended = () => { setScreenStream(null); setIsStreaming(false); };
-      if (screenVideoRef.current) screenVideoRef.current.srcObject = stream;
+      // Устанавливаем srcObject через небольшую задержку чтобы элемент успел отрендериться
+      setTimeout(() => { if (screenVideoRef.current) screenVideoRef.current.srcObject = stream; }, 100);
     } catch { /* пользователь отменил */ }
   };
 
@@ -1299,97 +1327,130 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
               </div>
 
               {/* Основная зона */}
-              <div className="flex-1 flex overflow-hidden">
+              <div className="flex-1 flex flex-col overflow-hidden" style={{ background: "#060a11" }}>
                 {/* Трансляция экрана */}
-                <div className="flex-1 flex flex-col items-center justify-center p-4" style={{ background: "#060a11" }}>
-                  {isStreaming && screenStream ? (
-                    <div className="relative w-full rounded-2xl overflow-hidden" style={{ aspectRatio: "16/9", maxHeight: "60vh", background: "#000" }}>
-                      <video ref={screenVideoRef} autoPlay muted playsInline className="w-full h-full object-contain"
-                        style={{ display: "block" }} />
-                      <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-lg" style={{ background: "rgba(0,0,0,0.7)" }}>
+                {isStreaming && screenStream && (
+                  <div className="relative flex-1 flex items-center justify-center p-4">
+                    <div className="relative w-full rounded-2xl overflow-hidden" style={{ maxHeight: "60vh", background: "#000", aspectRatio: "16/9" }}>
+                      <video
+                        ref={el => { screenVideoRef.current = el; if (el && screenStream) el.srcObject = screenStream; }}
+                        autoPlay muted playsInline className="w-full h-full object-contain"
+                      />
+                      <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ background: "rgba(0,0,0,0.8)", backdropFilter: "blur(4px)" }}>
                         <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: "#ff00aa" }} />
-                        <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "11px", color: "#ff00aa" }}>В ЭФИРЕ</span>
+                        <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "11px", color: "#ff00aa" }}>В ЭФИРЕ · {user.username}</span>
                       </div>
                       <div className="absolute bottom-3 right-3 flex gap-2">
-                        <button onClick={() => setMicMuted(v => !v)} className="w-9 h-9 rounded-xl flex items-center justify-center"
-                          style={{ background: micMuted ? "rgba(255,68,68,0.8)" : "rgba(0,0,0,0.7)", color: micMuted ? "#fff" : "#e2e8f0" }}>
+                        <button onClick={() => setMicMuted(v => !v)} className="w-9 h-9 rounded-xl flex items-center justify-center hover:opacity-90"
+                          style={{ background: micMuted ? "rgba(255,68,68,0.9)" : "rgba(0,0,0,0.8)", backdropFilter: "blur(4px)", color: micMuted ? "#fff" : "#e2e8f0", border: micMuted ? "1px solid rgba(255,68,68,0.5)" : "1px solid rgba(255,255,255,0.1)" }}>
                           <Icon name={micMuted ? "MicOff" : "Mic"} size={16} />
                         </button>
-                        <button onClick={stopScreenShare} className="w-9 h-9 rounded-xl flex items-center justify-center"
-                          style={{ background: "rgba(255,0,170,0.8)", color: "#fff" }}>
+                        <button onClick={stopScreenShare} className="w-9 h-9 rounded-xl flex items-center justify-center hover:opacity-90"
+                          style={{ background: "rgba(255,0,170,0.9)", backdropFilter: "blur(4px)", color: "#fff" }}>
                           <Icon name="MonitorOff" size={16} />
                         </button>
                       </div>
                     </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-6">
-                      {/* Аватарки участников */}
-                      <div className="flex flex-wrap justify-center gap-4 max-w-lg">
-                        {(voiceParticipants[String(activeVoiceChannel)] || []).map(p => (
-                          <div key={p.user_id} className="flex flex-col items-center gap-2">
-                            <div className="relative">
-                              <div className="w-20 h-20 rounded-full flex items-center justify-center transition-all"
-                                style={{
-                                  background: p.avatar_color + "22",
-                                  color: p.avatar_color,
-                                  border: `3px solid ${p.muted ? "rgba(255,68,68,0.5)" : p.avatar_color + "66"}`,
-                                  boxShadow: p.muted ? "none" : `0 0 20px ${p.avatar_color}33`,
-                                  fontFamily: "Rajdhani, sans-serif", fontWeight: 900, fontSize: "22px",
-                                }}>
-                                {p.username.slice(0, 2).toUpperCase()}
-                              </div>
-                              {p.muted && (
-                                <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center" style={{ background: "#ff4444" }}>
-                                  <Icon name="MicOff" size={12} style={{ color: "#fff" }} />
-                                </div>
-                              )}
-                              {p.streaming && (
-                                <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "#ff00aa" }}>
-                                  <Icon name="MonitorPlay" size={10} style={{ color: "#fff" }} />
-                                </div>
-                              )}
-                            </div>
-                            <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px", color: p.avatar_color }}>{p.username}</span>
-                          </div>
-                        ))}
-                        {(voiceParticipants[String(activeVoiceChannel)] || []).length === 0 && (
-                          <div style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "14px", color: "#4a5568" }}>Вы единственный в канале</div>
-                        )}
+                  </div>
+                )}
+
+                {/* Участники голосового канала */}
+                <div className={`flex flex-wrap justify-center gap-5 p-8 ${isStreaming && screenStream ? "shrink-0 border-t border-white border-opacity-5" : "flex-1 items-center content-center"}`}>
+                  {/* Я сам (всегда первый) */}
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="relative">
+                      <div className="w-20 h-20 rounded-full flex items-center justify-center transition-all"
+                        style={{
+                          background: user.avatar_color + "22", color: user.avatar_color,
+                          border: `3px solid ${micMuted ? "rgba(255,68,68,0.5)" : user.avatar_color + "88"}`,
+                          boxShadow: micMuted ? "none" : `0 0 24px ${user.avatar_color}44`,
+                          fontFamily: "Rajdhani, sans-serif", fontWeight: 900, fontSize: "22px",
+                        }}>
+                        {user.username.slice(0, 2).toUpperCase()}
                       </div>
-                      {/* Кнопки управления */}
-                      <div className="flex items-center gap-3">
-                        <button onClick={() => setMicMuted(v => !v)}
-                          className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all hover:scale-105"
-                          style={{ background: micMuted ? "rgba(255,68,68,0.2)" : "rgba(0,255,136,0.12)", border: `1px solid ${micMuted ? "rgba(255,68,68,0.4)" : "rgba(0,255,136,0.25)"}`, color: micMuted ? "#ff4444" : "#00ff88" }}>
-                          <Icon name={micMuted ? "MicOff" : "Mic"} size={20} />
-                        </button>
-                        <button onClick={() => setHeadphonesDeaf(v => !v)}
-                          className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all hover:scale-105"
-                          style={{ background: headphonesDeaf ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.06)", border: `1px solid ${headphonesDeaf ? "rgba(255,68,68,0.4)" : "rgba(255,255,255,0.1)"}`, color: headphonesDeaf ? "#ff4444" : "#6b7fa3" }}>
-                          <Icon name={headphonesDeaf ? "VolumeX" : "Headphones"} size={20} />
-                        </button>
-                        <button onClick={startScreenShare}
-                          className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all hover:scale-105"
-                          style={{ background: "rgba(0,170,255,0.12)", border: "1px solid rgba(0,170,255,0.25)", color: "#00aaff" }}>
-                          <Icon name="MonitorPlay" size={20} />
-                        </button>
-                        <button onClick={leaveVoiceChannel}
-                          className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all hover:scale-105"
-                          style={{ background: "rgba(255,68,68,0.2)", border: "1px solid rgba(255,68,68,0.4)", color: "#ff4444" }}>
-                          <Icon name="PhoneOff" size={20} />
-                        </button>
-                      </div>
+                      {micMuted && (
+                        <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center" style={{ background: "#ff4444" }}>
+                          <Icon name="MicOff" size={12} style={{ color: "#fff" }} />
+                        </div>
+                      )}
+                      {isStreaming && (
+                        <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "#ff00aa" }}>
+                          <Icon name="MonitorPlay" size={10} style={{ color: "#fff" }} />
+                        </div>
+                      )}
                     </div>
-                  )}
+                    <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px", color: user.avatar_color }}>{user.username} (вы)</span>
+                  </div>
+
+                  {/* Другие участники */}
+                  {(voiceParticipants[String(activeVoiceChannel)] || [])
+                    .filter(p => p.user_id !== user.id)
+                    .map(p => (
+                      <div key={p.user_id} className="flex flex-col items-center gap-2">
+                        <div className="relative">
+                          <div className="w-20 h-20 rounded-full flex items-center justify-center transition-all"
+                            style={{
+                              background: p.avatar_color + "22", color: p.avatar_color,
+                              border: `3px solid ${p.muted ? "rgba(255,68,68,0.5)" : p.avatar_color + "88"}`,
+                              boxShadow: p.muted ? "none" : `0 0 24px ${p.avatar_color}44`,
+                              fontFamily: "Rajdhani, sans-serif", fontWeight: 900, fontSize: "22px",
+                            }}>
+                            {p.username.slice(0, 2).toUpperCase()}
+                          </div>
+                          {p.muted && (
+                            <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center" style={{ background: "#ff4444" }}>
+                              <Icon name="MicOff" size={12} style={{ color: "#fff" }} />
+                            </div>
+                          )}
+                          {p.streaming && (
+                            <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "#ff00aa" }}>
+                              <Icon name="MonitorPlay" size={10} style={{ color: "#fff" }} />
+                            </div>
+                          )}
+                        </div>
+                        <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px", color: p.avatar_color }}>{p.username}</span>
+                      </div>
+                    ))}
+                </div>
+
+                {/* Панель управления */}
+                <div className="shrink-0 flex items-center justify-center gap-3 py-4" style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+                  <button onClick={() => setMicMuted(v => !v)}
+                    className="flex flex-col items-center gap-1 w-14 h-14 rounded-2xl justify-center transition-all hover:scale-105"
+                    style={{ background: micMuted ? "rgba(255,68,68,0.2)" : "rgba(0,255,136,0.12)", border: `1px solid ${micMuted ? "rgba(255,68,68,0.4)" : "rgba(0,255,136,0.25)"}`, color: micMuted ? "#ff4444" : "#00ff88" }}
+                    title={micMuted ? "Включить микрофон" : "Выключить микрофон"}>
+                    <Icon name={micMuted ? "MicOff" : "Mic"} size={20} />
+                  </button>
+                  <button onClick={() => setHeadphonesDeaf(v => !v)}
+                    className="flex flex-col items-center gap-1 w-14 h-14 rounded-2xl justify-center transition-all hover:scale-105"
+                    style={{ background: headphonesDeaf ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.06)", border: `1px solid ${headphonesDeaf ? "rgba(255,68,68,0.4)" : "rgba(255,255,255,0.1)"}`, color: headphonesDeaf ? "#ff4444" : "#6b7fa3" }}
+                    title={headphonesDeaf ? "Включить звук" : "Выключить звук"}>
+                    <Icon name={headphonesDeaf ? "VolumeX" : "Headphones"} size={20} />
+                  </button>
+                  <button onClick={isStreaming ? stopScreenShare : startScreenShare}
+                    className="flex flex-col items-center gap-1 w-14 h-14 rounded-2xl justify-center transition-all hover:scale-105"
+                    style={{ background: isStreaming ? "rgba(255,0,170,0.2)" : "rgba(0,170,255,0.12)", border: `1px solid ${isStreaming ? "rgba(255,0,170,0.4)" : "rgba(0,170,255,0.25)"}`, color: isStreaming ? "#ff00aa" : "#00aaff" }}
+                    title={isStreaming ? "Остановить трансляцию" : "Начать трансляцию"}>
+                    <Icon name={isStreaming ? "MonitorOff" : "MonitorPlay"} size={20} />
+                  </button>
+                  <button onClick={leaveVoiceChannel}
+                    className="flex flex-col items-center gap-1 w-14 h-14 rounded-2xl justify-center transition-all hover:scale-105"
+                    style={{ background: "rgba(255,68,68,0.2)", border: "1px solid rgba(255,68,68,0.4)", color: "#ff4444" }}
+                    title="Выйти из канала">
+                    <Icon name="PhoneOff" size={20} />
+                  </button>
                 </div>
               </div>
 
-              {/* Нижняя полоска — кто в канале */}
+              {/* Нижняя полоска */}
               {activeVoiceChannel && (
-                <div className="px-4 py-2 shrink-0 flex items-center gap-2" style={{ background: "rgba(0,255,136,0.05)", borderTop: "1px solid rgba(0,255,136,0.08)" }}>
-                  <Icon name="Volume2" size={12} style={{ color: "#00ff88" }} />
+                <div className="px-4 py-1.5 shrink-0 flex items-center gap-2" style={{ background: "rgba(0,255,136,0.05)", borderTop: "1px solid rgba(0,255,136,0.08)" }}>
+                  <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "#00ff88" }} />
                   <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "11px", color: "#00ff88" }}>
-                    {sData.channels.voice.find(c => c.id === activeVoiceChannel)?.name} · {(voiceParticipants[String(activeVoiceChannel)] || []).length} участн.
+                    {sData.channels.voice.find(c => c.id === activeVoiceChannel)?.name}
+                  </span>
+                  <span style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "11px", color: "#4a5568" }}>
+                    · {1 + (voiceParticipants[String(activeVoiceChannel)] || []).filter(p => p.user_id !== user.id).length} участн.
                   </span>
                 </div>
               )}

@@ -265,6 +265,74 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors(), "body": json.dumps({"ok": True})}
 
+        # ── ЗВОНКИ ────────────────────────────────────────────
+        # Пригласить в звонок
+        if action == "call_invite":
+            caller_id = int(body.get("caller_id"))
+            callee_id = int(body.get("callee_id"))
+            caller_name = body.get("caller_name", "")
+            caller_color = body.get("caller_color", "#00ff88")
+            call_type = body.get("call_type", "audio")
+            # Отменяем предыдущие висящие звонки от этого caller к callee
+            cur.execute(
+                f"UPDATE {SCHEMA}.call_invites SET status='cancelled' "
+                f"WHERE caller_id=%s AND callee_id=%s AND status='ringing'",
+                (caller_id, callee_id)
+            )
+            cur.execute(
+                f"INSERT INTO {SCHEMA}.call_invites (caller_id, caller_name, caller_color, callee_id, call_type, status) "
+                f"VALUES (%s,%s,%s,%s,%s,'ringing') RETURNING id",
+                (caller_id, caller_name, caller_color, callee_id, call_type)
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({"ok": True, "call_id": row[0]})}
+
+        # Опросить входящий звонок
+        if action == "call_poll":
+            user_id = int(params.get("user_id") or body.get("user_id"))
+            # Отдаём звонок только если он ringing и создан не позже 30 секунд назад
+            cur.execute(
+                f"SELECT id, caller_id, caller_name, caller_color, call_type "
+                f"FROM {SCHEMA}.call_invites "
+                f"WHERE callee_id=%s AND status='ringing' AND created_at > NOW() - INTERVAL '30 seconds' "
+                f"ORDER BY created_at DESC LIMIT 1",
+                (user_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                return {"statusCode": 200, "headers": cors(), "body": json.dumps({"incoming": None})}
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({
+                "incoming": {
+                    "call_id": row[0], "caller_id": row[1],
+                    "caller_name": row[2], "caller_color": row[3], "call_type": row[4],
+                }
+            })}
+
+        # Ответить на звонок (accept/decline/cancel)
+        if action == "call_answer":
+            call_id = int(body.get("call_id"))
+            answer = body.get("answer", "decline")  # accept | decline | cancel
+            new_status = "accepted" if answer == "accept" else ("cancelled" if answer == "cancel" else "declined")
+            cur.execute(
+                f"UPDATE {SCHEMA}.call_invites SET status=%s, answered_at=NOW() WHERE id=%s",
+                (new_status, call_id)
+            )
+            conn.commit()
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({"ok": True, "status": new_status})}
+
+        # Проверить статус исходящего звонка
+        if action == "call_status":
+            call_id = int(params.get("call_id") or body.get("call_id"))
+            cur.execute(
+                f"SELECT status FROM {SCHEMA}.call_invites WHERE id=%s",
+                (call_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                return {"statusCode": 404, "headers": cors(), "body": json.dumps({"error": "not found"})}
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({"status": row[0]})}
+
         return {"statusCode": 400, "headers": cors(), "body": json.dumps({"error": f"unknown action: {action}"})}
 
     finally:
