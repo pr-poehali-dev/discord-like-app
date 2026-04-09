@@ -9,6 +9,8 @@ import StreamCapture from "@/components/StreamCapture";
 import DMView from "@/components/DMView";
 import ProfileModal from "@/components/ProfileModal";
 import UserAvatar from "@/components/UserAvatar";
+import AudioDevicePicker from "@/components/AudioDevicePicker";
+import { useWebRTC } from "@/hooks/useWebRTC";
 
 const MESSAGES_URL = "https://functions.poehali.dev/bd122cd3-cf73-44cb-b4a3-4b1eb3cfdaac";
 const API_URL = "https://functions.poehali.dev/34ebed0a-100a-450c-8c07-780342df2a96";
@@ -320,6 +322,7 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [hasVideo, setHasVideo] = useState(false);
+  const [showVoiceDevicePicker, setShowVoiceDevicePicker] = useState(false);
   const [forumThreads, setForumThreads] = useState<{ id: number; title: string; content: string; author_name: string; avatar_color: string; tags?: string; pinned?: boolean; locked?: boolean; created_at: string; reply_count: number }[]>([]);
   const [activeForumChannel, setActiveForumChannel] = useState<number | null>(null);
   const [activeThread, setActiveThread] = useState<{ id: number; title: string; content: string; author_name: string; avatar_color: string; tags?: string; pinned?: boolean; locked?: boolean; created_at: string; reply_count: number } | null>(null);
@@ -370,6 +373,15 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   isStreamingRef.current = isStreaming;
   activeVoiceChannelRef.current = activeVoiceChannel;
   activeServerRef.current = activeServer;
+
+  // WebRTC для голосовых каналов (без call_id — каналы не используют p2p сигналинг, только устройства)
+  const voiceWebRTC = useWebRTC({
+    userId: user?.id ?? 0,
+    callId: null,
+    remoteUserId: null,
+    isInitiator: false,
+    withVideo: hasVideo,
+  });
 
   const server = servers.find(s => s.id === activeServer) || servers[0];
   const sData = SERVER_DATA[activeServer] || SERVER_DATA[1];
@@ -821,7 +833,9 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
     if (activeVoiceChannelRef.current) await leaveVoiceChannel();
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const micId = voiceWebRTC.selectedMic;
+      const audioConstraint = micId && micId !== "default" ? { deviceId: { exact: micId } } : true;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint, video: false });
       setMyStream(stream);
       stream.getAudioTracks().forEach(t => { t.enabled = !micMutedRef.current; });
     } catch { /* нет микрофона — продолжаем без него */ }
@@ -1179,15 +1193,20 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
             </div>
             <div className="flex gap-1.5">
               <button onClick={() => setMicMuted(v => !v)} className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity"
-                style={{ background: micMuted ? "rgba(255,68,68,0.2)" : "rgba(0,255,136,0.12)", color: micMuted ? "#ff4444" : "#00ff88" }}>
+                style={{ background: micMuted ? "rgba(255,68,68,0.2)" : "rgba(0,255,136,0.12)", color: micMuted ? "#ff4444" : "#00ff88" }} title={micMuted ? "Включить микрофон" : "Выключить микрофон"}>
                 <Icon name={micMuted ? "MicOff" : "Mic"} size={13} />
               </button>
               <button onClick={() => setHeadphonesDeaf(v => !v)} className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity"
-                style={{ background: headphonesDeaf ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.06)", color: headphonesDeaf ? "#ff4444" : "#6b7fa3" }}>
+                style={{ background: headphonesDeaf ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.06)", color: headphonesDeaf ? "#ff4444" : "#6b7fa3" }} title={headphonesDeaf ? "Включить звук" : "Выключить звук"}>
                 <Icon name={headphonesDeaf ? "VolumeX" : "Headphones"} size={13} />
               </button>
+              <button onClick={() => { voiceWebRTC.refreshDevices(); setShowVoiceDevicePicker(true); }}
+                className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity"
+                style={{ background: "rgba(255,255,255,0.06)", color: "#6b7fa3" }} title="Настройки устройств">
+                <Icon name="Settings2" size={13} />
+              </button>
               <button onClick={leaveVoiceChannel} className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity ml-auto"
-                style={{ background: "rgba(255,68,68,0.15)", color: "#ff4444" }}>
+                style={{ background: "rgba(255,68,68,0.15)", color: "#ff4444" }} title="Покинуть канал">
                 <Icon name="PhoneOff" size={13} />
               </button>
             </div>
@@ -2084,6 +2103,37 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
         </div>
       )}
     </div>
+
+    {/* Выбор устройств для голосовых каналов */}
+    {showVoiceDevicePicker && (
+      <AudioDevicePicker
+        audioDevices={voiceWebRTC.audioDevices}
+        videoDevices={voiceWebRTC.videoDevices}
+        outputDevices={voiceWebRTC.outputDevices}
+        selectedMic={voiceWebRTC.selectedMic}
+        selectedCamera={voiceWebRTC.selectedCamera}
+        selectedSpeaker={voiceWebRTC.selectedSpeaker}
+        onSelectMic={async (id) => {
+          voiceWebRTC.selectMic(id);
+          // Если уже в канале — переключаем микрофон в живом потоке
+          if (myStream) {
+            try {
+              const constraint = id !== "default" ? { deviceId: { exact: id } } : true;
+              const newS = await navigator.mediaDevices.getUserMedia({ audio: constraint, video: false });
+              const newTrack = newS.getAudioTracks()[0];
+              myStream.getAudioTracks().forEach(t => t.stop());
+              const updated = new MediaStream([newTrack, ...myStream.getVideoTracks()]);
+              newTrack.enabled = !micMuted;
+              setMyStream(updated);
+            } catch { /* silent */ }
+          }
+        }}
+        onSelectCamera={voiceWebRTC.selectCamera}
+        onSelectSpeaker={voiceWebRTC.selectSpeaker}
+        withVideo={false}
+        onClose={() => setShowVoiceDevicePicker(false)}
+      />
+    )}
     </>
   );
 }
