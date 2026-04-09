@@ -333,6 +333,45 @@ def handler(event: dict, context) -> dict:
                 return {"statusCode": 404, "headers": cors(), "body": json.dumps({"error": "not found"})}
             return {"statusCode": 200, "headers": cors(), "body": json.dumps({"status": row[0]})}
 
+        # ── WebRTC СИГНАЛИНГ ──────────────────────────────────
+        # Отправить сигнал (offer / answer / ice-candidate)
+        if action == "webrtc_signal":
+            call_id = int(body.get("call_id"))
+            from_user_id = int(body.get("from_user_id"))
+            to_user_id = int(body.get("to_user_id"))
+            signal_type = body.get("type", "")   # offer | answer | ice
+            payload = body.get("payload", "")
+            if not all([call_id, from_user_id, to_user_id, signal_type, payload]):
+                return {"statusCode": 400, "headers": cors(), "body": json.dumps({"error": "missing fields"})}
+            cur.execute(
+                f"INSERT INTO {SCHEMA}.webrtc_signals (call_id, from_user_id, to_user_id, type, payload) "
+                f"VALUES (%s,%s,%s,%s,%s) RETURNING id",
+                (call_id, from_user_id, to_user_id, signal_type, payload)
+            )
+            conn.commit()
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({"ok": True})}
+
+        # Получить новые сигналы для пользователя (polling)
+        if action == "webrtc_poll":
+            call_id = int(params.get("call_id") or body.get("call_id"))
+            to_user_id = int(params.get("user_id") or body.get("user_id"))
+            cur.execute(
+                f"SELECT id, from_user_id, type, payload FROM {SCHEMA}.webrtc_signals "
+                f"WHERE call_id=%s AND to_user_id=%s AND consumed=FALSE "
+                f"ORDER BY created_at ASC LIMIT 20",
+                (call_id, to_user_id)
+            )
+            rows = cur.fetchall()
+            if rows:
+                ids = [str(r[0]) for r in rows]
+                cur.execute(
+                    f"UPDATE {SCHEMA}.webrtc_signals SET consumed=TRUE "
+                    f"WHERE id IN ({','.join(ids)})"
+                )
+                conn.commit()
+            signals = [{"id": r[0], "from_user_id": r[1], "type": r[2], "payload": r[3]} for r in rows]
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({"signals": signals})}
+
         return {"statusCode": 400, "headers": cors(), "body": json.dumps({"error": f"unknown action: {action}"})}
 
     finally:

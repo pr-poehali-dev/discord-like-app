@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import Icon from "@/components/ui/icon";
 import UserAvatar from "@/components/UserAvatar";
 import IncomingCall from "@/components/IncomingCall";
+import AudioDevicePicker from "@/components/AudioDevicePicker";
+import { useWebRTC } from "@/hooks/useWebRTC";
 
 const DM_URL = "https://functions.poehali.dev/b026ce37-f295-45e6-9d62-287d071942eb";
 const ONLINE_URL = "https://functions.poehali.dev/66112eb3-a471-46d1-b43a-c46fa78fbe18";
@@ -117,19 +119,28 @@ export default function DMView({
   const [sidebarSearch, setSidebarSearch] = useState("");
   // Загрузка
   const [loadingMsgs, setLoadingMsgs] = useState(false);
-  // Звонок (исходящий)
+  // Звонок
   const [callActive, setCallActive] = useState(false);
   const [callVideo, setCallVideo] = useState(false);
-  const [callMuted, setCallMuted] = useState(false);
-  const [callDeaf, setCallDeaf] = useState(false);
   const [callTimer, setCallTimer] = useState(0);
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [screenShareStream, setScreenShareStream] = useState<MediaStream | null>(null);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [outgoingCallId, setOutgoingCallId] = useState<number | null>(null);
   const [outgoingCallStatus, setOutgoingCallStatus] = useState<"ringing" | "accepted" | "declined" | "cancelled">("ringing");
+  const [callRemoteUserId, setCallRemoteUserId] = useState<number | null>(null);
+  const [isCallInitiator, setIsCallInitiator] = useState(false);
+  const [showDevicePicker, setShowDevicePicker] = useState(false);
   // Входящий звонок
   const [incomingCall, setIncomingCall] = useState<{ call_id: number; caller_id: number; caller_name: string; caller_color: string; call_type: "audio" | "video" } | null>(null);
+
+  // WebRTC хук — активен только во время звонка
+  const webrtc = useWebRTC({
+    userId: user.id,
+    callId: outgoingCallId,
+    remoteUserId: callRemoteUserId,
+    isInitiator: isCallInitiator,
+    withVideo: callVideo,
+  });
 
   const msgsEndRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -183,13 +194,10 @@ export default function DMView({
   // ── Звонок ─────────────────────────────────────────────
   const startCall = async (withVideo = false) => {
     if (!activeConvo) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo });
-      setLocalStream(stream);
-      if (withVideo && localVideoRef.current) localVideoRef.current.srcObject = stream;
-    } catch { /* нет устройств */ }
+    setCallVideo(withVideo);
+    setIsCallInitiator(true);
+    setCallRemoteUserId(activeConvo.user_id);
 
-    // Отправить приглашение через backend
     try {
       const res = await fetch(DM_URL, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -203,7 +211,6 @@ export default function DMView({
       if (data.call_id) {
         setOutgoingCallId(data.call_id);
         setOutgoingCallStatus("ringing");
-        // Следим за статусом исходящего звонка
         outgoingCallPollRef.current = setInterval(async () => {
           try {
             const r = await fetch(`${DM_URL}?action=call_status&call_id=${data.call_id}`);
@@ -212,7 +219,7 @@ export default function DMView({
               setOutgoingCallStatus("accepted");
               if (outgoingCallPollRef.current) clearInterval(outgoingCallPollRef.current);
             } else if (d.status === "declined" || d.status === "cancelled") {
-              setOutgoingCallStatus(d.status);
+              setOutgoingCallStatus(d.status as "declined" | "cancelled");
               if (outgoingCallPollRef.current) clearInterval(outgoingCallPollRef.current);
               setTimeout(() => endCall(), 2000);
             }
@@ -222,9 +229,6 @@ export default function DMView({
     } catch { /* silent */ }
 
     setCallActive(true);
-    setCallVideo(withVideo);
-    setCallMuted(false);
-    setCallDeaf(false);
     setCallTimer(0);
     callTimerRef.current = setInterval(() => setCallTimer(t => t + 1), 1000);
   };
@@ -232,18 +236,19 @@ export default function DMView({
   const endCall = () => {
     if (callTimerRef.current) { clearInterval(callTimerRef.current); callTimerRef.current = null; }
     if (outgoingCallPollRef.current) { clearInterval(outgoingCallPollRef.current); outgoingCallPollRef.current = null; }
-    if (localStream) { localStream.getTracks().forEach(t => t.stop()); setLocalStream(null); }
     if (screenShareStream) { screenShareStream.getTracks().forEach(t => t.stop()); setScreenShareStream(null); setIsScreenSharing(false); }
-    // Отменяем исходящий если был
+    webrtc.hangup();
     if (outgoingCallId) {
       fetch(DM_URL, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "call_answer", call_id: outgoingCallId, answer: "cancel" }),
       }).catch(() => {});
-      setOutgoingCallId(null);
     }
     setCallActive(false);
     setCallVideo(false);
     setCallTimer(0);
+    setOutgoingCallId(null);
+    setCallRemoteUserId(null);
+    setIsCallInitiator(false);
     setOutgoingCallStatus("ringing");
   };
 
@@ -253,20 +258,19 @@ export default function DMView({
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "call_answer", call_id: incomingCall.call_id, answer: "accept" }),
     }).catch(() => {});
-    // Открываем диалог с caller и начинаем звонок
     const convo = {
       user_id: incomingCall.caller_id, username: incomingCall.caller_name,
       avatar_color: incomingCall.caller_color, status: "online",
       last_msg: "", last_time: "", is_online: true,
     };
     setActiveConvo(convo);
-    setIncomingCall(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: incomingCall.call_type === "video" });
-      setLocalStream(stream);
-    } catch { /* нет устройств */ }
-    setCallActive(true);
+    // Настраиваем WebRTC как принимающий
+    setOutgoingCallId(incomingCall.call_id);
+    setCallRemoteUserId(incomingCall.caller_id);
+    setIsCallInitiator(false);
     setCallVideo(incomingCall.call_type === "video");
+    setIncomingCall(null);
+    setCallActive(true);
     setCallTimer(0);
     callTimerRef.current = setInterval(() => setCallTimer(t => t + 1), 1000);
   };
@@ -496,6 +500,23 @@ export default function DMView({
         />
       )}
 
+      {/* Выбор устройств */}
+      {showDevicePicker && (
+        <AudioDevicePicker
+          audioDevices={webrtc.audioDevices}
+          videoDevices={webrtc.videoDevices}
+          outputDevices={webrtc.outputDevices}
+          selectedMic={webrtc.selectedMic}
+          selectedCamera={webrtc.selectedCamera}
+          selectedSpeaker={webrtc.selectedSpeaker}
+          onSelectMic={webrtc.selectMic}
+          onSelectCamera={webrtc.selectCamera}
+          onSelectSpeaker={webrtc.selectSpeaker}
+          withVideo={callVideo}
+          onClose={() => setShowDevicePicker(false)}
+        />
+      )}
+
       {/* Сайдбар */}
       <div className="flex flex-col w-60 shrink-0" style={{ background: "var(--dark-panel)", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
 
@@ -617,28 +638,40 @@ export default function DMView({
             <div className="ml-auto flex items-center gap-2">
               {callActive ? (
                 <>
-                  {/* Статус звонка */}
-                  {outgoingCallStatus === "ringing" && outgoingCallId ? (
+                  {/* Статус / индикатор подключения */}
+                  {outgoingCallStatus === "ringing" && isCallInitiator ? (
                     <span style={{ ...iF, fontSize: "12px", color: "#6b7fa3" }} className="animate-pulse">Вызов...</span>
                   ) : outgoingCallStatus === "declined" ? (
                     <span style={{ ...iF, fontSize: "12px", color: "#ff4444" }}>Отклонён</span>
                   ) : (
-                    <span style={{ ...rF, fontWeight: 700, fontSize: "13px", color: "#00ff88" }}>{fmtTime(callTimer)}</span>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full" style={{ background: webrtc.connected ? "#00ff88" : "#ff6600", animation: webrtc.connected ? "none" : "pulse 1s infinite" }} title={webrtc.connected ? "Соединено" : "Подключение..."} />
+                      <span style={{ ...rF, fontWeight: 700, fontSize: "13px", color: webrtc.connected ? "#00ff88" : "#ff6600" }}>{fmtTime(callTimer)}</span>
+                    </div>
                   )}
-                  <button onClick={toggleCallMic} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
-                    style={{ background: callMuted ? "rgba(255,68,68,0.2)" : "rgba(0,255,136,0.1)", color: callMuted ? "#ff4444" : "#00ff88" }} title={callMuted ? "Включить микрофон" : "Выключить микрофон"}>
-                    <Icon name={callMuted ? "MicOff" : "Mic"} size={15} />
+                  {/* Мут микрофона */}
+                  <button onClick={() => webrtc.setMicMuted(!webrtc.micMuted)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
+                    style={{ background: webrtc.micMuted ? "rgba(255,68,68,0.2)" : "rgba(0,255,136,0.1)", color: webrtc.micMuted ? "#ff4444" : "#00ff88" }} title={webrtc.micMuted ? "Включить микрофон" : "Выключить микрофон"}>
+                    <Icon name={webrtc.micMuted ? "MicOff" : "Mic"} size={15} />
                   </button>
-                  <button onClick={() => setCallDeaf(v => !v)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
-                    style={{ background: callDeaf ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.06)", color: callDeaf ? "#ff4444" : "#6b7fa3" }} title="Наушники">
-                    <Icon name={callDeaf ? "VolumeX" : "Headphones"} size={15} />
+                  {/* Деафен */}
+                  <button onClick={() => webrtc.setDeafened(!webrtc.deafened)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
+                    style={{ background: webrtc.deafened ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.06)", color: webrtc.deafened ? "#ff4444" : "#6b7fa3" }} title={webrtc.deafened ? "Включить звук" : "Выключить звук"}>
+                    <Icon name={webrtc.deafened ? "VolumeX" : "Headphones"} size={15} />
                   </button>
+                  {/* Трансляция экрана */}
                   {callVideo && (
                     <button onClick={isScreenSharing ? stopCallScreenShare : startCallScreenShare} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
                       style={{ background: isScreenSharing ? "rgba(255,0,170,0.2)" : "rgba(0,170,255,0.1)", color: isScreenSharing ? "#ff00aa" : "#00aaff" }} title="Трансляция экрана">
                       <Icon name={isScreenSharing ? "MonitorOff" : "MonitorPlay"} size={15} />
                     </button>
                   )}
+                  {/* Устройства */}
+                  <button onClick={() => setShowDevicePicker(true)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
+                    style={{ background: "rgba(255,255,255,0.06)", color: "#6b7fa3" }} title="Настройки устройств">
+                    <Icon name="Settings2" size={15} />
+                  </button>
+                  {/* Завершить */}
                   <button onClick={endCall} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
                     style={{ background: "rgba(255,68,68,0.2)", color: "#ff4444" }} title="Завершить звонок">
                     <Icon name="PhoneOff" size={15} />
@@ -652,6 +685,12 @@ export default function DMView({
                   <button onClick={() => startCall(true)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(0,170,255,0.08)" }} title="Видеозвонок">
                     <Icon name="Video" size={15} style={{ color: "#00aaff" }} />
                   </button>
+                  {/* Настройки устройств (всегда доступны) */}
+                  <button onClick={() => { webrtc.refreshDevices(); setShowDevicePicker(true); }}
+                    className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity"
+                    style={{ background: "rgba(255,255,255,0.05)" }} title="Настройки микрофона и динамика">
+                    <Icon name="Settings2" size={15} style={{ color: "#6b7fa3" }} />
+                  </button>
                 </>
               )}
               <button className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(255,255,255,0.05)" }} title="Профиль">
@@ -662,38 +701,46 @@ export default function DMView({
 
           {/* Видео звонок */}
           {callActive && callVideo && (
-            <div className="shrink-0 relative" style={{ height: "220px", background: "#060a11", borderBottom: "1px solid rgba(0,255,136,0.08)" }}>
+            <div className="shrink-0 relative" style={{ height: "240px", background: "#060a11", borderBottom: "1px solid rgba(0,255,136,0.08)" }}>
               {isScreenSharing && screenShareStream ? (
                 <video ref={screenVideoRef} autoPlay muted playsInline className="w-full h-full object-contain" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center gap-8">
-                  {/* Собеседник (заглушка) */}
+                  {/* Удалённое видео собеседника */}
                   <div className="flex flex-col items-center gap-2">
-                    <div className="w-24 h-24 rounded-full flex items-center justify-center"
-                      style={{ background: activeConvo.avatar_color + "22", color: activeConvo.avatar_color, border: `3px solid ${activeConvo.avatar_color}55`, ...rF, fontWeight: 900, fontSize: "28px", boxShadow: `0 0 24px ${activeConvo.avatar_color}33` }}>
-                      {activeConvo.username.slice(0, 2).toUpperCase()}
-                    </div>
-                    <span style={{ ...rF, fontWeight: 700, fontSize: "12px", color: activeConvo.avatar_color }}>{activeConvo.username}</span>
-                  </div>
-                  {/* Моё видео */}
-                  <div className="relative">
-                    {localStream && localStream.getVideoTracks().length > 0 ? (
-                      <video ref={localVideoRef} autoPlay muted playsInline className="w-24 h-24 rounded-full object-cover"
-                        style={{ border: `3px solid ${user.avatar_color}55` }} />
+                    {webrtc.remoteStream && webrtc.remoteStream.getVideoTracks().length > 0 ? (
+                      <video autoPlay playsInline className="w-32 h-32 rounded-2xl object-cover"
+                        style={{ border: `2px solid ${activeConvo.avatar_color}44` }}
+                        ref={el => { if (el && webrtc.remoteStream) el.srcObject = webrtc.remoteStream; }} />
                     ) : (
                       <div className="w-24 h-24 rounded-full flex items-center justify-center"
-                        style={{ background: user.avatar_color + "22", color: user.avatar_color, border: `3px solid ${user.avatar_color}55`, ...rF, fontWeight: 900, fontSize: "28px" }}>
+                        style={{ background: activeConvo.avatar_color + "22", color: activeConvo.avatar_color, border: `3px solid ${activeConvo.avatar_color}55`, ...rF, fontWeight: 900, fontSize: "28px", boxShadow: `0 0 24px ${activeConvo.avatar_color}33` }}>
+                        {activeConvo.username.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <span style={{ ...rF, fontWeight: 700, fontSize: "12px", color: activeConvo.avatar_color }}>{activeConvo.username}</span>
+                  </div>
+                  {/* Моё локальное видео */}
+                  <div className="flex flex-col items-center gap-2">
+                    {webrtc.localStream && webrtc.localStream.getVideoTracks().length > 0 ? (
+                      <video autoPlay muted playsInline className="w-24 h-24 rounded-2xl object-cover"
+                        style={{ border: `2px solid ${user.avatar_color}44` }}
+                        ref={el => { if (el && webrtc.localStream) el.srcObject = webrtc.localStream; }} />
+                    ) : (
+                      <div className="w-20 h-20 rounded-full flex items-center justify-center"
+                        style={{ background: user.avatar_color + "22", color: user.avatar_color, border: `2px solid ${user.avatar_color}44`, ...rF, fontWeight: 900, fontSize: "22px" }}>
                         {user.username.slice(0, 2).toUpperCase()}
                       </div>
                     )}
-                    <span style={{ ...rF, fontWeight: 700, fontSize: "12px", color: user.avatar_color, display: "block", textAlign: "center", marginTop: "6px" }}>Вы</span>
+                    <span style={{ ...rF, fontWeight: 700, fontSize: "11px", color: user.avatar_color }}>Вы</span>
                   </div>
                 </div>
               )}
-              {/* Статус звонка */}
               <div className="absolute top-2 left-3 flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: "#00ff88" }} />
-                <span style={{ ...rF, fontWeight: 700, fontSize: "11px", color: "#00ff88" }}>Видеозвонок · {fmtTime(callTimer)}</span>
+                <div className="w-2 h-2 rounded-full" style={{ background: webrtc.connected ? "#00ff88" : "#ff6600", animation: "pulse 1s infinite" }} />
+                <span style={{ ...rF, fontWeight: 700, fontSize: "11px", color: webrtc.connected ? "#00ff88" : "#ff6600" }}>
+                  {webrtc.connected ? `Видеозвонок · ${fmtTime(callTimer)}` : "Подключение..."}
+                </span>
               </div>
             </div>
           )}
@@ -703,14 +750,14 @@ export default function DMView({
             <div className="shrink-0 flex items-center justify-center gap-6 py-4" style={{ background: "rgba(0,255,136,0.04)", borderBottom: "1px solid rgba(0,255,136,0.08)" }}>
               <div className="flex flex-col items-center gap-2">
                 <div className="w-16 h-16 rounded-full flex items-center justify-center"
-                  style={{ background: activeConvo.avatar_color + "22", color: activeConvo.avatar_color, border: `3px solid ${activeConvo.avatar_color}55`, ...rF, fontWeight: 900, fontSize: "20px", boxShadow: `0 0 20px ${activeConvo.avatar_color}22` }}>
+                  style={{ background: activeConvo.avatar_color + "22", color: activeConvo.avatar_color, border: `3px solid ${webrtc.connected ? activeConvo.avatar_color + "88" : activeConvo.avatar_color + "33"}`, ...rF, fontWeight: 900, fontSize: "20px", boxShadow: webrtc.connected ? `0 0 20px ${activeConvo.avatar_color}33` : "none", transition: "all 0.3s" }}>
                   {activeConvo.username.slice(0, 2).toUpperCase()}
                 </div>
                 <span style={{ ...rF, fontWeight: 700, fontSize: "12px", color: activeConvo.avatar_color }}>{activeConvo.username}</span>
               </div>
               <div className="flex flex-col items-center gap-1">
-                <Icon name="Phone" size={18} style={{ color: "#00ff88" }} className="animate-pulse" />
-                <span style={{ ...rF, fontWeight: 700, fontSize: "13px", color: "#00ff88" }}>{fmtTime(callTimer)}</span>
+                <Icon name={webrtc.connected ? "Phone" : "Loader2"} size={18} style={{ color: webrtc.connected ? "#00ff88" : "#ff6600" }} className={webrtc.connected ? "" : "animate-spin"} />
+                <span style={{ ...rF, fontWeight: 700, fontSize: "13px", color: webrtc.connected ? "#00ff88" : "#ff6600" }}>{webrtc.connected ? fmtTime(callTimer) : "Подключение..."}</span>
                 <span style={{ ...iF, fontSize: "11px", color: "#6b7fa3" }}>Голосовой звонок</span>
               </div>
             </div>
