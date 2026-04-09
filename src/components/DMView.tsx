@@ -108,6 +108,8 @@ export default function DMView({
   const [addInput, setAddInput] = useState("");
   const [addStatus, setAddStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [addError, setAddError] = useState("");
+  const [addingFriendId, setAddingFriendId] = useState<number | null>(null);
+  const [addedFriendIds, setAddedFriendIds] = useState<Set<number>>(new Set());
   // Контекст сообщения
   const [menuMsgId, setMenuMsgId] = useState<number | null>(null);
   // Редактирование
@@ -410,7 +412,7 @@ export default function DMView({
     } catch { /* silent */ }
   };
 
-  // ── Добавить друга ─────────────────────────────────────
+  // ── Добавить друга по username (из поля ввода) ──────────
   const addFriend = async () => {
     if (!addInput.trim()) return;
     setAddStatus("sending");
@@ -437,6 +439,25 @@ export default function DMView({
       setAddError("Ошибка соединения");
       setTimeout(() => setAddStatus("idle"), 3000);
     }
+  };
+
+  // ── Добавить друга прямо из результатов поиска ──────────
+  const addFriendById = async (targetUser: SearchUser) => {
+    if (addingFriendId === targetUser.id) return;
+    setAddingFriendId(targetUser.id);
+    try {
+      const res = await fetch(DM_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "add_friend", user_id: user.id, username: targetUser.username }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setAddedFriendIds(prev => new Set(prev).add(targetUser.id));
+        fetchFriends();
+      }
+    } catch { /* silent */ }
+    setAddingFriendId(null);
   };
 
   // ── Принять/отклонить заявку ───────────────────────────
@@ -1006,49 +1027,100 @@ export default function DMView({
 
           <div className="flex-1 overflow-y-auto px-6 py-4">
 
-            {/* Поиск */}
-            <div className="flex items-center gap-2 px-4 py-2 rounded-xl mb-5" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
-              <Icon name={searching ? "Loader2" : "Search"} size={15} style={{ color: "#6b7fa3" }} className={searching ? "animate-spin" : ""} />
-              <input
-                value={searchQuery}
-                onChange={e => doSearch(e.target.value)}
-                placeholder="Найти или начать новый чат..."
-                className="flex-1 bg-transparent outline-none"
-                style={{ ...iF, fontSize: "14px", color: "#e2e8f0" }}
-              />
-              {searchQuery && <button onClick={() => { setSearchQuery(""); setSearchResults([]); }} style={{ color: "#4a5568", background: "none", border: "none", cursor: "pointer" }}>✕</button>}
-            </div>
-
-            {/* Результаты поиска */}
-            {searchResults.length > 0 && (
-              <div className="mb-5">
-                <div style={{ ...rF, fontWeight: 600, fontSize: "11px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "8px" }}>
-                  Результаты поиска
-                </div>
-                {searchResults.map(u => (
-                  <div key={u.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1 group hover:bg-white hover:bg-opacity-5 transition-colors cursor-pointer"
-                    onClick={() => openConvo({ id: u.id, username: u.username, avatar_color: u.avatar_color, is_online: u.is_online, status: u.status })}>
-                    <div className="relative">
-                      <div className="w-10 h-10 rounded-full flex items-center justify-center"
-                        style={{ background: u.avatar_color + "22", color: u.avatar_color, border: `1px solid ${u.avatar_color}33`, ...rF, fontWeight: 700, fontSize: "13px" }}>
-                        {u.username.slice(0, 2).toUpperCase()}
-                      </div>
-                      <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2"
-                        style={{ background: u.is_online ? STATUS_COLOR.online : STATUS_COLOR.offline, borderColor: "var(--dark-bg)" }} />
-                    </div>
-                    <div className="flex-1">
-                      <div style={{ ...rF, fontWeight: 700, fontSize: "15px", color: u.avatar_color }}>{u.username}</div>
-                      <div style={{ ...iF, fontSize: "12px", color: "#6b7fa3" }}>{u.is_online ? "В сети" : "Не в сети"}</div>
-                    </div>
-                    <button className="opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1.5 rounded-lg"
-                      style={{ ...rF, fontWeight: 700, fontSize: "12px", background: "rgba(0,255,136,0.12)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.25)" }}
-                      onClick={e => { e.stopPropagation(); openConvo({ id: u.id, username: u.username, avatar_color: u.avatar_color, is_online: u.is_online, status: u.status }); }}>
-                      Написать
-                    </button>
-                  </div>
-                ))}
+            {/* Умный поиск: люди + добавление в друзья */}
+            <div className="mb-5">
+              <div className="flex items-center gap-2 px-4 py-2.5 rounded-2xl" style={{ background: "rgba(255,255,255,0.05)", border: `1px solid ${searchQuery ? "rgba(0,255,136,0.25)" : "rgba(255,255,255,0.08)"}`, transition: "border-color 0.2s" }}>
+                <Icon name={searching ? "Loader2" : "Search"} size={15} style={{ color: searching ? "#00ff88" : "#6b7fa3", flexShrink: 0 }} className={searching ? "animate-spin" : ""} />
+                <input
+                  value={searchQuery}
+                  onChange={e => doSearch(e.target.value)}
+                  placeholder="Поиск людей по имени..."
+                  className="flex-1 bg-transparent outline-none"
+                  style={{ ...iF, fontSize: "14px", color: "#e2e8f0" }}
+                />
+                {searchQuery && (
+                  <button onClick={() => { setSearchQuery(""); setSearchResults([]); }} className="w-5 h-5 rounded-full flex items-center justify-center hover:opacity-70" style={{ background: "rgba(255,255,255,0.1)", color: "#6b7fa3", flexShrink: 0 }}>
+                    <Icon name="X" size={11} />
+                  </button>
+                )}
               </div>
-            )}
+
+              {/* Результаты поиска с кнопкой добавить */}
+              {searchQuery.trim().length >= 2 && (
+                <div className="mt-2 rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.07)", background: "rgba(255,255,255,0.02)" }}>
+                  {searching && searchResults.length === 0 && (
+                    <div className="flex items-center gap-3 px-4 py-3">
+                      <Icon name="Loader2" size={16} style={{ color: "#6b7fa3" }} className="animate-spin" />
+                      <span style={{ ...iF, fontSize: "13px", color: "#6b7fa3" }}>Ищу...</span>
+                    </div>
+                  )}
+                  {!searching && searchResults.length === 0 && (
+                    <div className="flex items-center gap-3 px-4 py-3">
+                      <Icon name="UserX" size={16} style={{ color: "#4a5568" }} />
+                      <span style={{ ...iF, fontSize: "13px", color: "#4a5568" }}>Никого не найдено по «{searchQuery}»</span>
+                    </div>
+                  )}
+                  {searchResults.map((u, idx) => {
+                    const isFriend = friends.some(f => f.id === u.id);
+                    const isPending = pending.some(p => p.id === u.id);
+                    const isAdded = addedFriendIds.has(u.id);
+                    const isAdding = addingFriendId === u.id;
+                    const isMe = u.id === user.id;
+                    return (
+                      <div key={u.id} className="flex items-center gap-3 px-4 py-3 group hover:bg-white hover:bg-opacity-4 transition-colors cursor-pointer"
+                        style={{ borderTop: idx > 0 ? "1px solid rgba(255,255,255,0.05)" : "none" }}
+                        onClick={() => !isMe && openConvo({ id: u.id, username: u.username, avatar_color: u.avatar_color, is_online: u.is_online, status: u.status })}>
+                        {/* Аватар */}
+                        <div className="relative shrink-0">
+                          <div className="w-10 h-10 rounded-full flex items-center justify-center"
+                            style={{ background: u.avatar_color + "22", color: u.avatar_color, border: `2px solid ${u.avatar_color}33`, ...rF, fontWeight: 800, fontSize: "13px" }}>
+                            {u.username.slice(0, 2).toUpperCase()}
+                          </div>
+                          <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2"
+                            style={{ background: u.is_online ? STATUS_COLOR.online : "#4a5568", borderColor: "var(--dark-bg)" }} />
+                        </div>
+                        {/* Инфо */}
+                        <div className="flex-1 min-w-0">
+                          <div style={{ ...rF, fontWeight: 700, fontSize: "15px", color: u.avatar_color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.username}</div>
+                          <div style={{ ...iF, fontSize: "12px", color: u.is_online ? "#00ff88" : "#4a5568" }}>
+                            {u.is_online ? "В сети" : "Не в сети"}
+                          </div>
+                        </div>
+                        {/* Кнопки действий */}
+                        {!isMe && (
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              onClick={e => { e.stopPropagation(); openConvo({ id: u.id, username: u.username, avatar_color: u.avatar_color, is_online: u.is_online, status: u.status }); }}
+                              className="px-3 py-1.5 rounded-xl transition-all hover:opacity-90"
+                              style={{ ...rF, fontWeight: 700, fontSize: "12px", background: "rgba(0,170,255,0.12)", color: "#00aaff", border: "1px solid rgba(0,170,255,0.2)" }}>
+                              <Icon name="MessageCircle" size={13} />
+                            </button>
+                            {isFriend ? (
+                              <span className="px-3 py-1.5 rounded-xl" style={{ ...rF, fontWeight: 700, fontSize: "12px", color: "#00ff88", background: "rgba(0,255,136,0.08)", border: "1px solid rgba(0,255,136,0.2)" }}>
+                                Друг ✓
+                              </span>
+                            ) : isPending || isAdded ? (
+                              <span className="px-3 py-1.5 rounded-xl" style={{ ...rF, fontWeight: 700, fontSize: "12px", color: "#ffcc00", background: "rgba(255,204,0,0.08)", border: "1px solid rgba(255,204,0,0.2)" }}>
+                                Заявка отправлена
+                              </span>
+                            ) : (
+                              <button
+                                onClick={e => { e.stopPropagation(); addFriendById(u); }}
+                                disabled={isAdding}
+                                className="px-3 py-1.5 rounded-xl transition-all hover:opacity-90 disabled:opacity-50"
+                                style={{ ...rF, fontWeight: 700, fontSize: "12px", background: "rgba(0,255,136,0.15)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.3)" }}>
+                                {isAdding ? <Icon name="Loader2" size={13} className="animate-spin" /> : <><Icon name="UserPlus" size={13} /> &nbsp;Добавить</>}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {isMe && <span style={{ ...iF, fontSize: "11px", color: "#4a5568" }}>Это ты</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             {/* Вкладка Друзья */}
             {tab === "friends" && !searchQuery && (
@@ -1098,28 +1170,6 @@ export default function DMView({
             {/* Вкладка Ожидание */}
             {tab === "pending" && !searchQuery && (
               <>
-                {/* Добавить друга */}
-                <div className="p-4 rounded-2xl mb-5" style={{ background: "rgba(0,255,136,0.05)", border: "1px solid rgba(0,255,136,0.15)" }}>
-                  <div style={{ ...rF, fontWeight: 700, fontSize: "14px", color: "#e2e8f0", marginBottom: "12px" }}>Добавить в друзья</div>
-                  <div className="flex gap-2">
-                    <input
-                      value={addInput}
-                      onChange={e => setAddInput(e.target.value)}
-                      onKeyDown={e => e.key === "Enter" && addFriend()}
-                      placeholder="Введи имя пользователя..."
-                      className="flex-1 px-3 py-2 rounded-xl outline-none"
-                      style={{ ...iF, fontSize: "14px", background: "rgba(255,255,255,0.05)", border: `1px solid ${addStatus === "error" ? "rgba(255,68,68,0.5)" : "rgba(0,255,136,0.2)"}`, color: "#e2e8f0" }}
-                    />
-                    <button onClick={addFriend} disabled={addStatus === "sending"}
-                      className="px-4 py-2 rounded-xl transition-all hover:opacity-90 disabled:opacity-50"
-                      style={{ ...rF, fontWeight: 700, fontSize: "14px", background: "rgba(0,255,136,0.2)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.4)", whiteSpace: "nowrap" }}>
-                      {addStatus === "sending" ? "..." : "Отправить заявку"}
-                    </button>
-                  </div>
-                  {addStatus === "sent" && <div style={{ ...iF, fontSize: "12px", color: "#00ff88", marginTop: "6px" }}>✓ Заявка отправлена!</div>}
-                  {addStatus === "error" && <div style={{ ...iF, fontSize: "12px", color: "#ff4444", marginTop: "6px" }}>✕ {addError}</div>}
-                </div>
-
                 {/* Входящие */}
                 {incomingPending.length > 0 && (
                   <>

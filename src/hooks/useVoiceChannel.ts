@@ -263,24 +263,35 @@ export function useVoiceChannel({ userId, channelId, micMuted, deafened }: Optio
     audioElemsRef.current.forEach(a => { a.muted = v; });
   }, []);
 
-  // ── Смена микрофона на лету ─────────────────────────────
+  // ── Смена микрофона мгновенно (без паузы) ──────────────
   const selectMic = useCallback(async (id: string) => {
     setSelectedMic(id);
     selectedMicRef.current = id;
+
+    const isMuted = !localStreamRef.current?.getAudioTracks()[0]?.enabled;
     const constraint = id !== "default" ? { deviceId: { exact: id } } : true;
+
+    let newTrack: MediaStreamTrack | null = null;
     try {
-      const newStream = await navigator.mediaDevices.getUserMedia({ audio: constraint, video: false });
-      const newTrack = newStream.getAudioTracks()[0];
-      // Заменяем трек во всех PC
-      peersRef.current.forEach(pc => {
-        const sender = pc.getSenders().find(s => s.track?.kind === "audio");
-        if (sender) sender.replaceTrack(newTrack).catch(() => {});
-      });
-      localStreamRef.current?.getAudioTracks().forEach(t => t.stop());
-      const updated = new MediaStream([newTrack]);
-      localStreamRef.current = updated;
-      setLocalStream(updated);
-    } catch { /* silent */ }
+      const s = await navigator.mediaDevices.getUserMedia({ audio: constraint, video: false });
+      newTrack = s.getAudioTracks()[0];
+    } catch { return; }
+
+    // Сначала подменяем трек во всех PC — получатели слышат новый микрофон немедленно
+    const replacePromises: Promise<void>[] = [];
+    peersRef.current.forEach(pc => {
+      const sender = pc.getSenders().find(s => s.track?.kind === "audio");
+      if (sender && newTrack) replacePromises.push(sender.replaceTrack(newTrack).catch(() => {}));
+    });
+    await Promise.all(replacePromises);
+
+    // Останавливаем старый трек только после успешной замены
+    localStreamRef.current?.getAudioTracks().forEach(t => t.stop());
+
+    newTrack.enabled = !isMuted;
+    const updated = new MediaStream([newTrack]);
+    localStreamRef.current = updated;
+    setLocalStream(updated);
   }, []);
 
   // ── Смена динамика ──────────────────────────────────────
