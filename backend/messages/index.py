@@ -62,14 +62,14 @@ def handler(event: dict, context) -> dict:
         if msg_ids:
             in_clause = ",".join(str(i) for i in msg_ids)
             cur.execute(
-                f"SELECT message_id, emoji, COUNT(*) as cnt, array_agg(user_id) as uids "
-                f"FROM {SCHEMA}.reactions WHERE message_id IN ({in_clause}) "
+                f"SELECT message_id, emoji, COUNT(*) as cnt "
+                f"FROM {SCHEMA}.message_reactions WHERE message_id IN ({in_clause}) "
                 f"GROUP BY message_id, emoji"
             )
             for rr in cur.fetchall():
                 if rr[0] not in reactions_map:
                     reactions_map[rr[0]] = []
-                reactions_map[rr[0]].append({"emoji": rr[1], "count": rr[2], "user_ids": rr[3]})
+                reactions_map[rr[0]].append({"emoji": rr[1], "count": rr[2], "user_ids": []})
 
         conn.close()
 

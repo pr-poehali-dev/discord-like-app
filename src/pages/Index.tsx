@@ -392,8 +392,10 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
       if (!data.messages?.length) return;
       const newMsgs: Msg[] = data.messages.map((m: {
         id: number; user_id?: number; username: string; avatar_color: string;
-        text: string; time: string; file_url?: string; file_name?: string;
+        text: string; time: string; date?: string; file_url?: string; file_name?: string;
         file_type?: string; edited?: boolean; is_removed?: boolean;
+        reactions?: { emoji: string; count: number; user_ids?: number[] }[];
+        reply_to_id?: number; reply_to_text?: string; reply_to_user?: string; mentions?: string;
       }) => ({
         id: m.id,
         user_id: m.user_id,
@@ -403,13 +405,18 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
         role: "",
         roleColor: m.avatar_color,
         time: m.time,
+        date: m.date,
         text: m.text,
-        reactions: [],
+        reactions: m.reactions || [],
         file_url: m.file_url,
         file_name: m.file_name,
         file_type: m.file_type,
         edited: m.edited,
         is_removed: m.is_removed,
+        reply_to_id: m.reply_to_id,
+        reply_to_text: m.reply_to_text,
+        reply_to_user: m.reply_to_user,
+        mentions: m.mentions,
       }));
       lastMsgIdRef.current[key] = data.messages[data.messages.length - 1].id;
       // звук уведомления при новом сообщении
@@ -481,14 +488,44 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   const sendMessage = async () => {
     if (!inputValue.trim()) return;
     const text = inputValue.trim();
+    const currentReplyTo = replyTo;
     setInputValue("");
     setReplyTo(null);
+    setMentionOpen(false);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    // Извлекаем упоминания из текста
     const mentionRegex = /@(\w+)/g;
     const foundMentions = [...text.matchAll(mentionRegex)].map(m => m[1]).join(",");
+
+    // Оптимистично добавляем сообщение сразу
+    const tempId = Date.now();
+    const now = new Date();
+    const optimisticMsg: Msg = {
+      id: tempId,
+      user_id: user.id,
+      user: user.username,
+      avatar: user.username.slice(0, 2).toUpperCase(),
+      color: user.avatar_color,
+      role: "",
+      roleColor: user.avatar_color,
+      time: now.toTimeString().slice(0, 5),
+      text,
+      reactions: [],
+      reply_to_id: currentReplyTo?.id,
+      reply_to_text: currentReplyTo?.text,
+      reply_to_user: currentReplyTo?.user,
+      mentions: foundMentions,
+    };
+    setServerMessages(prev => ({
+      ...prev,
+      [activeServer]: {
+        ...(prev[activeServer] || {}),
+        [activeChannel]: [...(prev[activeServer]?.[activeChannel] || []), optimisticMsg],
+      },
+    }));
+    setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: "smooth" }), 30);
+
     try {
-      await fetch(MESSAGES_URL, {
+      const res = await fetch(MESSAGES_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -498,14 +535,35 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
           username: user.username,
           avatar_color: user.avatar_color,
           text,
-          reply_to_id: replyTo?.id ?? null,
-          reply_to_text: replyTo?.text ?? "",
-          reply_to_user: replyTo?.user ?? "",
+          reply_to_id: currentReplyTo?.id ?? null,
+          reply_to_text: currentReplyTo?.text ?? "",
+          reply_to_user: currentReplyTo?.user ?? "",
           mentions: foundMentions,
         }),
       });
-      fetchMessages(activeServer, activeChannel);
-    } catch { /* silent */ }
+      const saved = await res.json();
+      if (saved.id) {
+        // Заменяем temp-сообщение реальным и обновляем lastMsgId
+        setServerMessages(prev => ({
+          ...prev,
+          [activeServer]: {
+            ...(prev[activeServer] || {}),
+            [activeChannel]: (prev[activeServer]?.[activeChannel] || [])
+              .map(m => m.id === tempId ? { ...optimisticMsg, id: saved.id, time: saved.time } : m),
+          },
+        }));
+        lastMsgIdRef.current[`${activeServer}_${activeChannel}`] = saved.id;
+      }
+    } catch {
+      // При ошибке убираем оптимистичное сообщение
+      setServerMessages(prev => ({
+        ...prev,
+        [activeServer]: {
+          ...(prev[activeServer] || {}),
+          [activeChannel]: (prev[activeServer]?.[activeChannel] || []).filter(m => m.id !== tempId),
+        },
+      }));
+    }
   };
 
   // Typing indicator
