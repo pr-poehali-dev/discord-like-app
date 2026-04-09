@@ -324,14 +324,10 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
 
       {/* Servers sidebar */}
       <div className="flex flex-col items-center py-4 gap-2 w-[68px] shrink-0" style={{ background: "#060a11", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-2 cursor-pointer" style={{ background: "linear-gradient(135deg, #00ff88, #00aaff)" }}>
-          <span style={{ fontFamily: "Orbitron, sans-serif", fontSize: "11px", fontWeight: 900, color: "#060a11" }}>NX</span>
-        </div>
-        {/* DM mode button */}
         <div onClick={() => setDmMode(v => !v)} title={dmMode ? "Вернуться к серверам" : "Личные сообщения"}
-          className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer transition-all hover:scale-105 group relative"
-          style={{ background: dmMode ? "rgba(0,170,255,0.2)" : "#0d1424", border: dmMode ? "1px solid #00aaff" : "1px solid rgba(0,170,255,0.3)", boxShadow: dmMode ? "0 0 12px rgba(0,170,255,0.4)" : "none" }}>
-          <Icon name="MessageCircle" size={16} style={{ color: "#00aaff" }} />
+          className="w-10 h-10 rounded-xl flex items-center justify-center mb-2 cursor-pointer transition-all hover:scale-105 group relative"
+          style={{ background: dmMode ? "linear-gradient(135deg, #00aaff, #00ff88)" : "linear-gradient(135deg, #00ff88, #00aaff)", boxShadow: dmMode ? "0 0 12px rgba(0,170,255,0.5)" : "none" }}>
+          <span style={{ fontFamily: "Orbitron, sans-serif", fontSize: "11px", fontWeight: 900, color: "#060a11" }}>NX</span>
           <div className="absolute left-12 rounded-lg px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 whitespace-nowrap" style={{ background: "#111a2e", color: "#e2e8f0", border: "1px solid rgba(0,170,255,0.2)", fontSize: "12px", fontFamily: "Rajdhani, sans-serif", fontWeight: 600 }}>
             {dmMode ? "← Серверы" : "Личные сообщения"}
           </div>
