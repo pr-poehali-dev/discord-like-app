@@ -389,7 +389,7 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   activeVoiceChannelRef.current = activeVoiceChannel;
   activeServerRef.current = activeServer;
 
-  const server = servers.find(s => s.id === activeServer) || servers[0];
+  const server = servers.find(s => s.id === activeServer) ?? servers[0] ?? null;
   const sData = SERVER_DATA[activeServer] || SERVER_DATA[1];
   const CHANNELS = sData.channels;
   const MEMBERS = sData.members;
@@ -1064,8 +1064,26 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
       )}
 
       {/* SERVERS MODE */}
+      {/* Пустой экран — нет серверов */}
+      {!dmMode && !server && (
+        <div className="flex-1 flex flex-col items-center justify-center gap-4" style={{ background: "var(--dark-bg)" }}>
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ background: "rgba(0,255,136,0.08)", border: "1px solid rgba(0,255,136,0.15)" }}>
+            <Icon name="Server" size={28} style={{ color: "rgba(0,255,136,0.4)" }} />
+          </div>
+          <div className="text-center">
+            <div style={{ fontFamily: "Orbitron, sans-serif", fontWeight: 700, fontSize: "16px", color: "#e2e8f0", marginBottom: "6px" }}>Нет серверов</div>
+            <div style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "13px", color: "#6b7fa3" }}>Создай свой сервер или вступи по приглашению</div>
+          </div>
+          <button onClick={() => setShowCreateServer(true)} className="flex items-center gap-2 px-5 py-2.5 rounded-xl hover:opacity-90 transition-all"
+            style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "14px", background: "rgba(0,255,136,0.15)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.3)" }}>
+            <Icon name="Plus" size={16} />
+            Создать сервер
+          </button>
+        </div>
+      )}
+
       {/* Channels panel */}
-      {!dmMode && <div className="flex flex-col w-[220px] shrink-0" style={{ background: "var(--dark-panel)", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
+      {!dmMode && server && <div className="flex flex-col w-[220px] shrink-0" style={{ background: "var(--dark-panel)", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
         {/* Server header */}
         <div className="px-3 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid rgba(0,255,136,0.1)" }}>
           <div className="flex-1 cursor-pointer hover:opacity-90 transition-all" onClick={() => setShowServerSettings(true)}>
@@ -1369,8 +1387,8 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
         </div>
       </div>}
 
-      {/* Main content — only in server mode */}
-      {!dmMode && <div className="flex-1 flex flex-col min-w-0" key={activeServer}>
+      {/* Main content — only in server mode when server is selected */}
+      {!dmMode && server && <div className="flex-1 flex flex-col min-w-0" key={activeServer}>
 
         {/* Header */}
         <div className="flex items-center px-4 py-2.5 shrink-0" style={{ background: "var(--dark-panel)", borderBottom: "1px solid rgba(0,255,136,0.08)" }}>
