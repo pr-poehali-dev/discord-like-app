@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Icon from "@/components/ui/icon";
+
 import ServerSettings from "@/components/ServerSettings";
 import UserSettings from "@/components/UserSettings";
 import CreateServerModal from "@/components/CreateServerModal";
@@ -8,6 +9,8 @@ import StreamCapture from "@/components/StreamCapture";
 import DMView from "@/components/DMView";
 import ProfileModal from "@/components/ProfileModal";
 import UserAvatar from "@/components/UserAvatar";
+
+const MESSAGES_URL = "https://functions.poehali.dev/bd122cd3-cf73-44cb-b4a3-4b1eb3cfdaac";
 
 interface User {
   id: number;
@@ -277,6 +280,55 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   const messages = serverMessages[activeServer]?.[activeChannel] || [];
   const channel = CHANNELS.text.find(c => c.id === activeChannel) || CHANNELS.text[0];
 
+  const lastMsgIdRef = useRef<Record<string, number>>({});
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  const fetchMessages = async (serverId: number, channelId: number) => {
+    const key = `${serverId}_${channelId}`;
+    const afterId = lastMsgIdRef.current[key] || 0;
+    try {
+      const res = await fetch(`${MESSAGES_URL}?server_id=${serverId}&channel_id=${channelId}&after_id=${afterId}`);
+      const data = await res.json();
+      if (!data.messages?.length) return;
+      const newMsgs: Msg[] = data.messages.map((m: { id: number; username: string; avatar_color: string; text: string; time: string }) => ({
+        id: m.id,
+        user: m.username,
+        avatar: m.username.slice(0, 2).toUpperCase(),
+        color: m.avatar_color,
+        role: "",
+        roleColor: m.avatar_color,
+        time: m.time,
+        text: m.text,
+        reactions: [],
+      }));
+      lastMsgIdRef.current[key] = data.messages[data.messages.length - 1].id;
+      setServerMessages(prev => ({
+        ...prev,
+        [serverId]: {
+          ...(prev[serverId] || {}),
+          [channelId]: [
+            ...(prev[serverId]?.[channelId] || []).filter(m => m.id < 1e12),
+            ...newMsgs,
+          ],
+        },
+      }));
+      setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    } catch { /* silent */ }
+  };
+
+  useEffect(() => {
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    setServerMessages(prev => ({
+      ...prev,
+      [activeServer]: { ...(prev[activeServer] || {}), [activeChannel]: [] },
+    }));
+    lastMsgIdRef.current[`${activeServer}_${activeChannel}`] = 0;
+    fetchMessages(activeServer, activeChannel);
+    pollingRef.current = setInterval(() => fetchMessages(activeServer, activeChannel), 2000);
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+  }, [activeServer, activeChannel]);
+
   const switchServer = (id: number) => {
     setActiveServer(id);
     const firstCh = (SERVER_DATA[id] || SERVER_DATA[1]).channels.text[0];
@@ -284,27 +336,25 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
     setActiveTab("chat");
   };
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     if (!inputValue.trim()) return;
-    const newMsg: Msg = {
-      id: Date.now(),
-      user: user.username,
-      avatar: user.username.slice(0, 2).toUpperCase(),
-      color: user.avatar_color,
-      role: "Admin",
-      roleColor: user.avatar_color,
-      time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
-      text: inputValue,
-      reactions: [],
-    };
-    setServerMessages(prev => ({
-      ...prev,
-      [activeServer]: {
-        ...(prev[activeServer] || {}),
-        [activeChannel]: [...(prev[activeServer]?.[activeChannel] || []), newMsg],
-      },
-    }));
+    const text = inputValue.trim();
     setInputValue("");
+    try {
+      await fetch(MESSAGES_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          server_id: activeServer,
+          channel_id: activeChannel,
+          user_id: user.id,
+          username: user.username,
+          avatar_color: user.avatar_color,
+          text,
+        }),
+      });
+      fetchMessages(activeServer, activeChannel);
+    } catch { /* silent */ }
   };
 
   return (
@@ -642,13 +692,7 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
                   </div>
                 ))}
 
-                {/* Typing indicator */}
-                <div className="flex items-center gap-2 px-3 py-1">
-                  <div className="flex gap-1">
-                    {[0, 1, 2].map(i => <div key={i} className="w-1.5 h-1.5 rounded-full typing-dot" style={{ background: "#6b7fa3" }} />)}
-                  </div>
-                  <span style={{ fontSize: "12px", color: "#6b7fa3", fontFamily: "IBM Plex Sans, sans-serif" }}>NeonShadow печатает...</span>
-                </div>
+                <div ref={chatBottomRef} />
               </div>
 
               {/* Input */}

@@ -1,0 +1,21 @@
+{
+  "tests": [
+    {
+      "name": "GET messages",
+      "method": "GET",
+      "path": "/?server_id=1&channel_id=101",
+      "expectedStatus": 200,
+      "expectedBody": {"messages": []},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "POST message",
+      "method": "POST",
+      "path": "/",
+      "body": {"server_id": 1, "channel_id": 101, "user_id": 1, "username": "TestUser", "avatar_color": "#00ff88", "text": "Тест сообщение"},
+      "expectedStatus": 200,
+      "expectedBody": {"text": "Тест сообщение"},
+      "bodyMatcher": "partial"
+    }
+  ]
+}

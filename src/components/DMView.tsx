@@ -3,6 +3,8 @@ import Icon from "@/components/ui/icon";
 import ProfileModal from "@/components/ProfileModal";
 import UserAvatar from "@/components/UserAvatar";
 
+const DM_URL = "https://functions.poehali.dev/b026ce37-f295-45e6-9d62-287d071942eb";
+
 interface User {
   id: number;
   username: string;
@@ -34,14 +36,14 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const FRIENDS = [
-  { id: 1, name: "CyberWolf",    color: "#00ff88", status: "online",    game: "Cyber Arena",       avatar: "CW", mutual: 3 },
-  { id: 2, name: "NeonShadow",   color: "#ff00aa", status: "streaming", game: "🔴 В эфире · CS2",  avatar: "NS", mutual: 5 },
-  { id: 3, name: "PixelKnight",  color: "#00aaff", status: "online",    game: "VALORANT",           avatar: "PK", mutual: 2 },
-  { id: 4, name: "GhostRunner",  color: "#aa00ff", status: "away",      game: "Отошёл",             avatar: "GR", mutual: 7 },
-  { id: 5, name: "IronCore",     color: "#ff6600", status: "dnd",       game: "Не беспокоить",      avatar: "IC", mutual: 1 },
-  { id: 6, name: "StarForge",    color: "#ffcc00", status: "offline",   game: "",                   avatar: "SF", mutual: 4 },
-  { id: 7, name: "VoidHunter",   color: "#00ffff", status: "online",    game: "Dota 2",             avatar: "VH", mutual: 6 },
-  { id: 8, name: "NightCrawler", color: "#ff4444", status: "offline",   game: "",                   avatar: "NC", mutual: 2 },
+  { id: 1, name: "CyberWolf",    color: "#00ff88", status: "online",    game: "Cyber Arena",       avatar: "CW", mutual: 3, userId: 2 },
+  { id: 2, name: "NeonShadow",   color: "#ff00aa", status: "streaming", game: "🔴 В эфире · CS2",  avatar: "NS", mutual: 5, userId: 3 },
+  { id: 3, name: "PixelKnight",  color: "#00aaff", status: "online",    game: "VALORANT",           avatar: "PK", mutual: 2, userId: 4 },
+  { id: 4, name: "GhostRunner",  color: "#aa00ff", status: "away",      game: "Отошёл",             avatar: "GR", mutual: 7, userId: 5 },
+  { id: 5, name: "IronCore",     color: "#ff6600", status: "dnd",       game: "Не беспокоить",      avatar: "IC", mutual: 1, userId: 6 },
+  { id: 6, name: "StarForge",    color: "#ffcc00", status: "offline",   game: "",                   avatar: "SF", mutual: 4, userId: 7 },
+  { id: 7, name: "VoidHunter",   color: "#00ffff", status: "online",    game: "Dota 2",             avatar: "VH", mutual: 6, userId: 8 },
+  { id: 8, name: "NightCrawler", color: "#ff4444", status: "offline",   game: "",                   avatar: "NC", mutual: 2, userId: 9 },
 ];
 
 const PENDING = [
@@ -93,7 +95,7 @@ export default function DMView({
   const [friendSearch, setFriendSearch] = useState("");
   const [addInput, setAddInput]     = useState("");
   const [addStatus, setAddStatus]   = useState<"idle" | "sent">("idle");
-  const [msgs, setMsgs]             = useState(INIT_MSGS);
+  const [msgs, setMsgs]             = useState<Record<number, Msg[]>>({});
   const [input, setInput]           = useState("");
   const [profileUser, setProfileUser] = useState<typeof FRIENDS[0] | null>(null);
   const [friends, setFriends]       = useState(FRIENDS);
@@ -108,10 +110,45 @@ export default function DMView({
   const [callTimer, setCallTimer]   = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const msgsEndRef = useRef<HTMLDivElement>(null);
+  const dmPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const dmLastIdRef = useRef<Record<number, number>>({});
+
+  const fetchDMs = async (friendId: number, friendUserId: number) => {
+    const afterId = dmLastIdRef.current[friendId] || 0;
+    try {
+      const res = await fetch(`${DM_URL}?user_a=${user.id}&user_b=${friendUserId}&after_id=${afterId}`);
+      const data = await res.json();
+      if (!data.messages?.length) return;
+      const newMsgs: Msg[] = data.messages.map((m: { id: number; from_user_id: number; text: string; time: string }) => ({
+        id: m.id,
+        from: m.from_user_id === user.id ? "me" as const : "them" as const,
+        text: m.text,
+        time: m.time,
+      }));
+      dmLastIdRef.current[friendId] = data.messages[data.messages.length - 1].id;
+      setMsgs(prev => ({
+        ...prev,
+        [friendId]: [...(prev[friendId] || []), ...newMsgs],
+      }));
+      setTimeout(() => msgsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    } catch { /* silent */ }
+  };
 
   useEffect(() => {
     msgsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeDM, msgs]);
+  }, [activeDM]);
+
+  useEffect(() => {
+    if (dmPollingRef.current) clearInterval(dmPollingRef.current);
+    if (!activeDM) return;
+    const friend = friends.find(f => f.id === activeDM);
+    if (!friend) return;
+    setMsgs(prev => ({ ...prev, [activeDM]: [] }));
+    dmLastIdRef.current[activeDM] = 0;
+    fetchDMs(activeDM, friend.userId ?? activeDM);
+    dmPollingRef.current = setInterval(() => fetchDMs(activeDM, friend.userId ?? activeDM), 2000);
+    return () => { if (dmPollingRef.current) clearInterval(dmPollingRef.current); };
+  }, [activeDM]);
 
   useEffect(() => {
     if (callActive) {
@@ -134,11 +171,24 @@ export default function DMView({
   };
   const endCall = () => { setCallActive(false); setCallFriend(null); };
 
-  const sendMsg = () => {
+  const sendMsg = async () => {
     if (!input.trim() || !activeDM) return;
-    const m: Msg = { id: Date.now(), from: "me", text: input.trim(), time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }) };
-    setMsgs(prev => ({ ...prev, [activeDM]: [...(prev[activeDM] || []), m] }));
+    const text = input.trim();
     setInput("");
+    const friend = friends.find(f => f.id === activeDM);
+    if (!friend) return;
+    try {
+      await fetch(DM_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from_user_id: user.id,
+          to_user_id: friend.userId ?? activeDM,
+          text,
+        }),
+      });
+      fetchDMs(activeDM, friend.userId ?? activeDM);
+    } catch { /* silent */ }
   };
 
   const filteredFriends = friends.filter(f => {
