@@ -116,12 +116,24 @@ export default function DMView({
   const [sidebarSearch, setSidebarSearch] = useState("");
   // Загрузка
   const [loadingMsgs, setLoadingMsgs] = useState(false);
+  // Звонок
+  const [callActive, setCallActive] = useState(false);
+  const [callVideo, setCallVideo] = useState(false);
+  const [callMuted, setCallMuted] = useState(false);
+  const [callDeaf, setCallDeaf] = useState(false);
+  const [callTimer, setCallTimer] = useState(0);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [screenShareStream, setScreenShareStream] = useState<MediaStream | null>(null);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
 
   const msgsEndRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastIdRef = useRef<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const screenVideoRef = useRef<HTMLVideoElement | null>(null);
 
   // ── Загрузка диалогов ──────────────────────────────────
   const fetchConvos = useCallback(async () => {
@@ -144,6 +156,53 @@ export default function DMView({
       if (pendData.friends) setPending(pendData.friends);
     } catch { /* silent */ }
   }, [user.id]);
+
+  // ── Звонок ─────────────────────────────────────────────
+  const startCall = async (withVideo = false) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo });
+      setLocalStream(stream);
+      if (withVideo && localVideoRef.current) localVideoRef.current.srcObject = stream;
+    } catch { /* нет устройств */ }
+    setCallActive(true);
+    setCallVideo(withVideo);
+    setCallMuted(false);
+    setCallDeaf(false);
+    setCallTimer(0);
+    callTimerRef.current = setInterval(() => setCallTimer(t => t + 1), 1000);
+  };
+
+  const endCall = () => {
+    if (callTimerRef.current) { clearInterval(callTimerRef.current); callTimerRef.current = null; }
+    if (localStream) { localStream.getTracks().forEach(t => t.stop()); setLocalStream(null); }
+    if (screenShareStream) { screenShareStream.getTracks().forEach(t => t.stop()); setScreenShareStream(null); setIsScreenSharing(false); }
+    setCallActive(false);
+    setCallVideo(false);
+    setCallTimer(0);
+  };
+
+  const toggleCallMic = () => {
+    if (localStream) localStream.getAudioTracks().forEach(t => { t.enabled = callMuted; });
+    setCallMuted(v => !v);
+  };
+
+  const startCallScreenShare = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      setScreenShareStream(stream);
+      setIsScreenSharing(true);
+      if (screenVideoRef.current) screenVideoRef.current.srcObject = stream;
+      stream.getVideoTracks()[0].onended = () => { setScreenShareStream(null); setIsScreenSharing(false); };
+    } catch { /* отмена */ }
+  };
+
+  const stopCallScreenShare = () => {
+    if (screenShareStream) { screenShareStream.getTracks().forEach(t => t.stop()); setScreenShareStream(null); }
+    setIsScreenSharing(false);
+  };
+
+  const fmtTime = (s: number) =>
+    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   // ── Загрузка сообщений ─────────────────────────────────
   const fetchMsgs = useCallback(async (partnerId: number, reset = false) => {
@@ -446,17 +505,99 @@ export default function DMView({
               </div>
             </div>
             <div className="ml-auto flex items-center gap-2">
-              <button className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(0,255,136,0.08)" }} title="Позвонить">
-                <Icon name="Phone" size={15} style={{ color: "#00ff88" }} />
-              </button>
-              <button className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(0,170,255,0.08)" }} title="Видеозвонок">
-                <Icon name="Video" size={15} style={{ color: "#00aaff" }} />
-              </button>
+              {callActive ? (
+                <>
+                  <span style={{ ...rF, fontWeight: 700, fontSize: "13px", color: "#00ff88" }}>{fmtTime(callTimer)}</span>
+                  <button onClick={toggleCallMic} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
+                    style={{ background: callMuted ? "rgba(255,68,68,0.2)" : "rgba(0,255,136,0.1)", color: callMuted ? "#ff4444" : "#00ff88" }} title={callMuted ? "Включить микрофон" : "Выключить микрофон"}>
+                    <Icon name={callMuted ? "MicOff" : "Mic"} size={15} />
+                  </button>
+                  <button onClick={() => setCallDeaf(v => !v)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
+                    style={{ background: callDeaf ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.06)", color: callDeaf ? "#ff4444" : "#6b7fa3" }} title="Наушники">
+                    <Icon name={callDeaf ? "VolumeX" : "Headphones"} size={15} />
+                  </button>
+                  {callVideo && (
+                    <button onClick={isScreenSharing ? stopCallScreenShare : startCallScreenShare} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
+                      style={{ background: isScreenSharing ? "rgba(255,0,170,0.2)" : "rgba(0,170,255,0.1)", color: isScreenSharing ? "#ff00aa" : "#00aaff" }} title="Трансляция экрана">
+                      <Icon name={isScreenSharing ? "MonitorOff" : "MonitorPlay"} size={15} />
+                    </button>
+                  )}
+                  <button onClick={endCall} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
+                    style={{ background: "rgba(255,68,68,0.2)", color: "#ff4444" }} title="Завершить звонок">
+                    <Icon name="PhoneOff" size={15} />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button onClick={() => startCall(false)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(0,255,136,0.08)" }} title="Голосовой звонок">
+                    <Icon name="Phone" size={15} style={{ color: "#00ff88" }} />
+                  </button>
+                  <button onClick={() => startCall(true)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(0,170,255,0.08)" }} title="Видеозвонок">
+                    <Icon name="Video" size={15} style={{ color: "#00aaff" }} />
+                  </button>
+                </>
+              )}
               <button className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(255,255,255,0.05)" }} title="Профиль">
                 <Icon name="User" size={15} style={{ color: "#6b7fa3" }} />
               </button>
             </div>
           </div>
+
+          {/* Видео звонок */}
+          {callActive && callVideo && (
+            <div className="shrink-0 relative" style={{ height: "220px", background: "#060a11", borderBottom: "1px solid rgba(0,255,136,0.08)" }}>
+              {isScreenSharing && screenShareStream ? (
+                <video ref={screenVideoRef} autoPlay muted playsInline className="w-full h-full object-contain" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center gap-8">
+                  {/* Собеседник (заглушка) */}
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="w-24 h-24 rounded-full flex items-center justify-center"
+                      style={{ background: activeConvo.avatar_color + "22", color: activeConvo.avatar_color, border: `3px solid ${activeConvo.avatar_color}55`, ...rF, fontWeight: 900, fontSize: "28px", boxShadow: `0 0 24px ${activeConvo.avatar_color}33` }}>
+                      {activeConvo.username.slice(0, 2).toUpperCase()}
+                    </div>
+                    <span style={{ ...rF, fontWeight: 700, fontSize: "12px", color: activeConvo.avatar_color }}>{activeConvo.username}</span>
+                  </div>
+                  {/* Моё видео */}
+                  <div className="relative">
+                    {localStream && localStream.getVideoTracks().length > 0 ? (
+                      <video ref={localVideoRef} autoPlay muted playsInline className="w-24 h-24 rounded-full object-cover"
+                        style={{ border: `3px solid ${user.avatar_color}55` }} />
+                    ) : (
+                      <div className="w-24 h-24 rounded-full flex items-center justify-center"
+                        style={{ background: user.avatar_color + "22", color: user.avatar_color, border: `3px solid ${user.avatar_color}55`, ...rF, fontWeight: 900, fontSize: "28px" }}>
+                        {user.username.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <span style={{ ...rF, fontWeight: 700, fontSize: "12px", color: user.avatar_color, display: "block", textAlign: "center", marginTop: "6px" }}>Вы</span>
+                  </div>
+                </div>
+              )}
+              {/* Статус звонка */}
+              <div className="absolute top-2 left-3 flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: "#00ff88" }} />
+                <span style={{ ...rF, fontWeight: 700, fontSize: "11px", color: "#00ff88" }}>Видеозвонок · {fmtTime(callTimer)}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Аудио звонок (без видео) */}
+          {callActive && !callVideo && (
+            <div className="shrink-0 flex items-center justify-center gap-6 py-4" style={{ background: "rgba(0,255,136,0.04)", borderBottom: "1px solid rgba(0,255,136,0.08)" }}>
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-16 h-16 rounded-full flex items-center justify-center"
+                  style={{ background: activeConvo.avatar_color + "22", color: activeConvo.avatar_color, border: `3px solid ${activeConvo.avatar_color}55`, ...rF, fontWeight: 900, fontSize: "20px", boxShadow: `0 0 20px ${activeConvo.avatar_color}22` }}>
+                  {activeConvo.username.slice(0, 2).toUpperCase()}
+                </div>
+                <span style={{ ...rF, fontWeight: 700, fontSize: "12px", color: activeConvo.avatar_color }}>{activeConvo.username}</span>
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <Icon name="Phone" size={18} style={{ color: "#00ff88" }} className="animate-pulse" />
+                <span style={{ ...rF, fontWeight: 700, fontSize: "13px", color: "#00ff88" }}>{fmtTime(callTimer)}</span>
+                <span style={{ ...iF, fontSize: "11px", color: "#6b7fa3" }}>Голосовой звонок</span>
+              </div>
+            </div>
+          )}
 
           {/* Сообщения */}
           <div className="flex-1 overflow-y-auto px-4 py-4" onClick={() => { setMenuMsgId(null); setEmojiPickerMsgId(null); }}>

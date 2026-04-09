@@ -261,6 +261,151 @@ def handler(event: dict, context) -> dict:
             url = f"https://cdn.poehali.dev/projects/{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
             return {"statusCode": 200, "headers": cors(), "body": json.dumps({"url": url, "file_name": file_name, "file_type": file_type})}
 
+        # ── ГОЛОСОВЫЕ КАНАЛЫ ─────────────────────────────────
+        if action == "voice_join":
+            server_id = int(body.get("server_id"))
+            channel_id = int(body.get("channel_id"))
+            user_id = int(body.get("user_id"))
+            username = body.get("username", "")
+            avatar_color = body.get("avatar_color", "#00ff88")
+            cur.execute(
+                f"INSERT INTO {SCHEMA}.voice_sessions (server_id, channel_id, user_id, username, avatar_color, last_ping) "
+                f"VALUES (%s,%s,%s,%s,%s,NOW()) "
+                f"ON CONFLICT (server_id, channel_id, user_id) DO UPDATE SET last_ping=NOW(), muted=FALSE, deafened=FALSE",
+                (server_id, channel_id, user_id, username, avatar_color)
+            )
+            conn.commit()
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({"ok": True})}
+
+        if action == "voice_leave":
+            server_id = int(body.get("server_id"))
+            channel_id = int(body.get("channel_id"))
+            user_id = int(body.get("user_id"))
+            cur.execute(
+                f"UPDATE {SCHEMA}.voice_sessions SET last_ping=NOW() - INTERVAL '2 minutes' "
+                f"WHERE server_id=%s AND channel_id=%s AND user_id=%s",
+                (server_id, channel_id, user_id)
+            )
+            conn.commit()
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({"ok": True})}
+
+        if action == "voice_ping":
+            server_id = int(body.get("server_id"))
+            channel_id = int(body.get("channel_id"))
+            user_id = int(body.get("user_id"))
+            muted = body.get("muted", False)
+            deafened = body.get("deafened", False)
+            streaming = body.get("streaming", False)
+            video = body.get("video", False)
+            cur.execute(
+                f"UPDATE {SCHEMA}.voice_sessions SET last_ping=NOW(), muted=%s, deafened=%s, streaming=%s, video=%s "
+                f"WHERE server_id=%s AND channel_id=%s AND user_id=%s",
+                (muted, deafened, streaming, video, server_id, channel_id, user_id)
+            )
+            conn.commit()
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({"ok": True})}
+
+        if action == "voice_list":
+            server_id = int(params.get("server_id") or body.get("server_id"))
+            cur.execute(
+                f"SELECT channel_id, user_id, username, avatar_color, muted, deafened, streaming, video "
+                f"FROM {SCHEMA}.voice_sessions "
+                f"WHERE server_id=%s AND last_ping > NOW() - INTERVAL '15 seconds' "
+                f"ORDER BY channel_id, joined_at ASC",
+                (server_id,)
+            )
+            rows = cur.fetchall()
+            by_channel: dict = {}
+            for r in rows:
+                cid = str(r[0])
+                if cid not in by_channel:
+                    by_channel[cid] = []
+                by_channel[cid].append({
+                    "user_id": r[1], "username": r[2], "avatar_color": r[3],
+                    "muted": r[4], "deafened": r[5], "streaming": r[6], "video": r[7],
+                })
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({"channels": by_channel})}
+
+        # ── ФОРУМ ─────────────────────────────────────────────
+        if action == "forum_list":
+            server_id = int(params.get("server_id") or body.get("server_id"))
+            channel_id = int(params.get("channel_id") or body.get("channel_id"))
+            cur.execute(
+                f"SELECT id, author_id, author_name, avatar_color, title, content, tags, pinned, locked, reply_count, created_at, last_reply_at "
+                f"FROM {SCHEMA}.forum_threads "
+                f"WHERE server_id=%s AND channel_id=%s "
+                f"ORDER BY pinned DESC, last_reply_at DESC LIMIT 50",
+                (server_id, channel_id)
+            )
+            rows = cur.fetchall()
+            threads = [
+                {"id": r[0], "author_id": r[1], "author_name": r[2], "avatar_color": r[3],
+                 "title": r[4], "content": r[5], "tags": r[6], "pinned": r[7], "locked": r[8],
+                 "reply_count": r[9], "created_at": r[10].strftime("%d.%m.%Y %H:%M"), "last_reply_at": r[11].strftime("%d.%m.%Y %H:%M")}
+                for r in rows
+            ]
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({"threads": threads})}
+
+        if action == "forum_create":
+            server_id = int(body.get("server_id"))
+            channel_id = int(body.get("channel_id"))
+            author_id = int(body.get("author_id"))
+            author_name = body.get("author_name", "")
+            avatar_color = body.get("avatar_color", "#00ff88")
+            title = (body.get("title") or "").strip()
+            content = (body.get("content") or "").strip()
+            tags = (body.get("tags") or "").strip()
+            if not title or not content:
+                return {"statusCode": 400, "headers": cors(), "body": json.dumps({"error": "title and content required"})}
+            cur.execute(
+                f"INSERT INTO {SCHEMA}.forum_threads (server_id, channel_id, author_id, author_name, avatar_color, title, content, tags) "
+                f"VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id, created_at",
+                (server_id, channel_id, author_id, author_name, avatar_color, title, content, tags)
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({
+                "id": row[0], "title": title, "content": content, "created_at": row[1].strftime("%d.%m.%Y %H:%M")
+            })}
+
+        if action == "forum_replies":
+            thread_id = int(params.get("thread_id") or body.get("thread_id"))
+            cur.execute(
+                f"SELECT id, author_id, author_name, avatar_color, content, created_at "
+                f"FROM {SCHEMA}.forum_replies WHERE thread_id=%s ORDER BY created_at ASC LIMIT 100",
+                (thread_id,)
+            )
+            rows = cur.fetchall()
+            replies = [
+                {"id": r[0], "author_id": r[1], "author_name": r[2], "avatar_color": r[3],
+                 "content": r[4], "created_at": r[5].strftime("%d.%m.%Y %H:%M")}
+                for r in rows
+            ]
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({"replies": replies})}
+
+        if action == "forum_reply":
+            thread_id = int(body.get("thread_id"))
+            author_id = int(body.get("author_id"))
+            author_name = body.get("author_name", "")
+            avatar_color = body.get("avatar_color", "#00ff88")
+            content = (body.get("content") or "").strip()
+            if not content:
+                return {"statusCode": 400, "headers": cors(), "body": json.dumps({"error": "content required"})}
+            cur.execute(
+                f"INSERT INTO {SCHEMA}.forum_replies (thread_id, author_id, author_name, avatar_color, content) "
+                f"VALUES (%s,%s,%s,%s,%s) RETURNING id, created_at",
+                (thread_id, author_id, author_name, avatar_color, content)
+            )
+            row = cur.fetchone()
+            cur.execute(
+                f"UPDATE {SCHEMA}.forum_threads SET reply_count=reply_count+1, last_reply_at=NOW() WHERE id=%s",
+                (thread_id,)
+            )
+            conn.commit()
+            return {"statusCode": 200, "headers": cors(), "body": json.dumps({
+                "id": row[0], "content": content, "created_at": row[1].strftime("%d.%m.%Y %H:%M")
+            })}
+
         return {"statusCode": 400, "headers": cors(), "body": json.dumps({"error": f"unknown action: {action}"})}
 
     finally:

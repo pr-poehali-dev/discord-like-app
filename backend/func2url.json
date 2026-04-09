@@ -1,7 +1,3 @@
 {
-  "api": "https://functions.poehali.dev/34ebed0a-100a-450c-8c07-780342df2a96",
-  "online": "https://functions.poehali.dev/66112eb3-a471-46d1-b43a-c46fa78fbe18",
-  "dm": "https://functions.poehali.dev/b026ce37-f295-45e6-9d62-287d071942eb",
-  "messages": "https://functions.poehali.dev/bd122cd3-cf73-44cb-b4a3-4b1eb3cfdaac",
-  "auth": "https://functions.poehali.dev/67bd2f8d-73c8-45bd-886b-8e747657c350"
+  "api": "https://functions.poehali.dev/34ebed0a-100a-450c-8c07-780342df2a96"
 }
