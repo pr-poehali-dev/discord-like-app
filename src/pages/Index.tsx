@@ -1093,9 +1093,9 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
             {activeTab === "chat" && <span className="text-sm" style={{ color: "#6b7fa3" }}>Тактические обсуждения</span>}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setShowStreamCapture(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all duration-200 hover:opacity-90" style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", background: streamActive ? "rgba(255,0,170,0.2)" : "rgba(0,255,136,0.1)", color: streamActive ? "#ff00aa" : "#00ff88", border: `1px solid ${streamActive ? "#ff00aa44" : "#00ff8844"}` }}>
-              <Icon name={streamActive ? "MonitorOff" : "MonitorPlay"} size={14} />
-              {streamActive ? "В эфире" : "Стримить"}
+            <button onClick={() => setShowStreamCapture(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all duration-200 hover:opacity-90" style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", background: isStreaming ? "rgba(255,0,170,0.2)" : "rgba(0,255,136,0.1)", color: isStreaming ? "#ff00aa" : "#00ff88", border: `1px solid ${isStreaming ? "#ff00aa44" : "#00ff8844"}` }}>
+              <Icon name={isStreaming ? "MonitorOff" : "MonitorPlay"} size={14} />
+              {isStreaming ? "В эфире" : "Стримить"}
             </button>
             {activeTab === "chat" && (
               <button onClick={() => setShowChannelSettings(true)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70 transition-opacity" title="Настройки канала" style={{ background: "rgba(255,255,255,0.05)" }}>
