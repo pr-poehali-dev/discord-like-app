@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Icon from "@/components/ui/icon";
-import ProfileModal from "@/components/ProfileModal";
 import UserAvatar from "@/components/UserAvatar";
 
 const DM_URL = "https://functions.poehali.dev/b026ce37-f295-45e6-9d62-287d071942eb";
+const ONLINE_URL = "https://functions.poehali.dev/66112eb3-a471-46d1-b43a-c46fa78fbe18";
 
 interface User {
   id: number;
@@ -28,707 +28,861 @@ interface DMViewProps {
   onOpenStatusMenu: () => void;
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  online: "#00ff88", streaming: "#ff00aa", away: "#ff6600", dnd: "#ff4444", offline: "#4a5568",
-};
-const STATUS_LABEL: Record<string, string> = {
-  online: "В сети", streaming: "Стримит", away: "Отошёл", dnd: "Не беспокоить", offline: "Не в сети",
-};
+interface Friend {
+  id: number;
+  username: string;
+  avatar_color: string;
+  user_status: string;
+  is_online: boolean;
+  direction?: string;
+  friend_status?: string;
+}
 
-const FRIENDS = [
-  { id: 1, name: "CyberWolf",    color: "#00ff88", status: "online",    game: "Cyber Arena",       avatar: "CW", mutual: 3, userId: 2 },
-  { id: 2, name: "NeonShadow",   color: "#ff00aa", status: "streaming", game: "🔴 В эфире · CS2",  avatar: "NS", mutual: 5, userId: 3 },
-  { id: 3, name: "PixelKnight",  color: "#00aaff", status: "online",    game: "VALORANT",           avatar: "PK", mutual: 2, userId: 4 },
-  { id: 4, name: "GhostRunner",  color: "#aa00ff", status: "away",      game: "Отошёл",             avatar: "GR", mutual: 7, userId: 5 },
-  { id: 5, name: "IronCore",     color: "#ff6600", status: "dnd",       game: "Не беспокоить",      avatar: "IC", mutual: 1, userId: 6 },
-  { id: 6, name: "StarForge",    color: "#ffcc00", status: "offline",   game: "",                   avatar: "SF", mutual: 4, userId: 7 },
-  { id: 7, name: "VoidHunter",   color: "#00ffff", status: "online",    game: "Dota 2",             avatar: "VH", mutual: 6, userId: 8 },
-  { id: 8, name: "NightCrawler", color: "#ff4444", status: "offline",   game: "",                   avatar: "NC", mutual: 2, userId: 9 },
-];
-
-const PENDING = [
-  { id: 9,  name: "DarkBlade",   color: "#aa00ff", direction: "incoming" as const },
-  { id: 10, name: "XenoStrike",  color: "#ff6600", direction: "outgoing" as const },
-];
+interface Convo {
+  user_id: number;
+  username: string;
+  avatar_color: string;
+  status: string;
+  last_msg: string;
+  last_time: string;
+  is_online: boolean;
+}
 
 interface Msg {
   id: number;
-  from: "me" | "them";
+  from_user_id: number;
   text: string;
   time: string;
-  type?: "call" | "vcall" | "text";
+  date?: string;
+  is_removed?: boolean;
+  edited?: boolean;
+  file_url?: string;
+  file_name?: string;
+  file_type?: string;
 }
 
-const INIT_MSGS: Record<number, Msg[]> = {
-  1: [
-    { id: 1, from: "them", text: "Йо! Готов к рейду?", time: "19:30" },
-    { id: 2, from: "me",   text: "Да, буду онлайн в 21:00", time: "19:31" },
-    { id: 3, from: "them", text: "Отлично! Я уже в голосовом", time: "19:32" },
-    { id: 4, from: "them", text: "📞 Пропущенный звонок", time: "19:45", type: "call" },
-    { id: 5, from: "me",   text: "Сорри, был занят. Звоню?", time: "19:50" },
-  ],
-  2: [
-    { id: 1, from: "them", text: "Смотришь стрим? 😄", time: "18:00" },
-    { id: 2, from: "me",   text: "Да! Топовый как всегда", time: "18:02" },
-  ],
-  3: [
-    { id: 1, from: "them", text: "Сыграем в VALORANT?", time: "20:10" },
-    { id: 2, from: "me",   text: "Конечно, создавай лобби", time: "20:11" },
-  ],
-  7: [
-    { id: 1, from: "them", text: "Привет! Давно не виделись в игре", time: "15:00" },
-  ],
+interface SearchUser {
+  id: number;
+  username: string;
+  avatar_color: string;
+  status: string;
+  is_online: boolean;
+}
+
+const STATUS_COLOR: Record<string, string> = {
+  online: "#00ff88", streaming: "#ff00aa", away: "#ff6600", dnd: "#ff4444", offline: "#4a5568",
 };
 
-type Section = "friends" | "chat" | "pending" | "blocked";
+const EMOJI_LIST = ["👍","❤️","😂","😮","😢","🔥","⚔️","🏆","💯","✅","👀","🎮"];
+
+type Tab = "friends" | "pending" | "blocked";
 
 export default function DMView({
-  user, avatarImg, onLogout, onOpenSettings, micMuted, headphonesDeaf,
-  onToggleMic, onToggleDeaf, myStatusDot, myStatusColor, myStatusLabel, onOpenStatusMenu,
+  user, avatarImg, onOpenSettings, micMuted, headphonesDeaf,
+  onToggleMic, onToggleDeaf, myStatusColor, myStatusLabel, onOpenStatusMenu,
 }: DMViewProps) {
   const rF = { fontFamily: "Rajdhani, sans-serif" };
   const iF = { fontFamily: "IBM Plex Sans, sans-serif" };
 
-  const [section, setSection]       = useState<Section>("friends");
-  const [activeDM, setActiveDM]     = useState<number | null>(null);
-  const [friendFilter, setFriendFilter] = useState<"online" | "all" | "offline">("online");
-  const [friendSearch, setFriendSearch] = useState("");
-  const [addInput, setAddInput]     = useState("");
-  const [addStatus, setAddStatus]   = useState<"idle" | "sent">("idle");
-  const [msgs, setMsgs]             = useState<Record<number, Msg[]>>({});
-  const [input, setInput]           = useState("");
-  const [profileUser, setProfileUser] = useState<typeof FRIENDS[0] | null>(null);
-  const [friends, setFriends]       = useState(FRIENDS);
-  const [pending, setPending]       = useState(PENDING);
+  // Активный диалог
+  const [activeConvo, setActiveConvo] = useState<Convo | null>(null);
+  // Список диалогов
+  const [convos, setConvos] = useState<Convo[]>([]);
+  // Сообщения текущего диалога
+  const [msgs, setMsgs] = useState<Msg[]>([]);
+  // Ввод
+  const [input, setInput] = useState("");
+  // Вкладка (друзья/входящие/заблокированные)
+  const [tab, setTab] = useState<Tab>("friends");
+  // Поиск на главном экране
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
+  const [searching, setSearching] = useState(false);
+  // Друзья
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [pending, setPending] = useState<Friend[]>([]);
+  // Добавить друга
+  const [addInput, setAddInput] = useState("");
+  const [addStatus, setAddStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [addError, setAddError] = useState("");
+  // Контекст сообщения
+  const [menuMsgId, setMenuMsgId] = useState<number | null>(null);
+  // Редактирование
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editText, setEditText] = useState("");
+  // Реакции (эмодзи пикер над сообщением)
+  const [emojiPickerMsgId, setEmojiPickerMsgId] = useState<number | null>(null);
+  // Поиск по собеседникам в сайдбаре
+  const [sidebarSearch, setSidebarSearch] = useState("");
+  // Загрузка
+  const [loadingMsgs, setLoadingMsgs] = useState(false);
 
-  // Call state
-  const [callActive, setCallActive] = useState(false);
-  const [callVideo, setCallVideo]   = useState(false);
-  const [callFriend, setCallFriend] = useState<typeof FRIENDS[0] | null>(null);
-  const [callMuted, setCallMuted]   = useState(false);
-  const [callDeaf, setCallDeaf]     = useState(false);
-  const [callTimer, setCallTimer]   = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const msgsEndRef = useRef<HTMLDivElement>(null);
-  const dmPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const dmLastIdRef = useRef<Record<number, number>>({});
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastIdRef = useRef<number>(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchDMs = async (friendId: number, friendUserId: number) => {
-    const afterId = dmLastIdRef.current[friendId] || 0;
+  // ── Загрузка диалогов ──────────────────────────────────
+  const fetchConvos = useCallback(async () => {
     try {
-      const res = await fetch(`${DM_URL}?user_a=${user.id}&user_b=${friendUserId}&after_id=${afterId}`);
+      const res = await fetch(`${DM_URL}?action=conversations&user_id=${user.id}`);
+      const data = await res.json();
+      if (data.conversations) setConvos(data.conversations);
+    } catch { /* silent */ }
+  }, [user.id]);
+
+  // ── Загрузка друзей ────────────────────────────────────
+  const fetchFriends = useCallback(async () => {
+    try {
+      const [accRes, pendRes] = await Promise.all([
+        fetch(`${DM_URL}?action=friends&user_id=${user.id}&status=accepted`),
+        fetch(`${DM_URL}?action=friends&user_id=${user.id}&status=pending`),
+      ]);
+      const [accData, pendData] = await Promise.all([accRes.json(), pendRes.json()]);
+      if (accData.friends) setFriends(accData.friends);
+      if (pendData.friends) setPending(pendData.friends);
+    } catch { /* silent */ }
+  }, [user.id]);
+
+  // ── Загрузка сообщений ─────────────────────────────────
+  const fetchMsgs = useCallback(async (partnerId: number, reset = false) => {
+    const afterId = reset ? 0 : lastIdRef.current;
+    try {
+      const res = await fetch(`${DM_URL}?user_a=${user.id}&user_b=${partnerId}&after_id=${afterId}`);
       const data = await res.json();
       if (!data.messages?.length) return;
-      const newMsgs: Msg[] = data.messages.map((m: { id: number; from_user_id: number; text: string; time: string }) => ({
-        id: m.id,
-        from: m.from_user_id === user.id ? "me" as const : "them" as const,
-        text: m.text,
-        time: m.time,
-      }));
-      dmLastIdRef.current[friendId] = data.messages[data.messages.length - 1].id;
-      setMsgs(prev => ({
-        ...prev,
-        [friendId]: [...(prev[friendId] || []), ...newMsgs],
-      }));
-      setTimeout(() => msgsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      lastIdRef.current = data.messages[data.messages.length - 1].id;
+      if (reset) {
+        setMsgs(data.messages);
+      } else {
+        setMsgs(prev => [...prev, ...data.messages]);
+      }
+      setTimeout(() => msgsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
+    } catch { /* silent */ }
+  }, [user.id]);
+
+  // При смене диалога
+  useEffect(() => {
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    if (!activeConvo) return;
+    setMsgs([]);
+    setInput("");
+    lastIdRef.current = 0;
+    setLoadingMsgs(true);
+    fetchMsgs(activeConvo.user_id, true).finally(() => setLoadingMsgs(false));
+    pollingRef.current = setInterval(() => fetchMsgs(activeConvo.user_id), 2000);
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+  }, [activeConvo?.user_id]);
+
+  // Начальная загрузка
+  useEffect(() => {
+    fetchConvos();
+    fetchFriends();
+    const convoPoll = setInterval(fetchConvos, 5000);
+    return () => clearInterval(convoPoll);
+  }, [fetchConvos, fetchFriends]);
+
+  // ── Открыть диалог ─────────────────────────────────────
+  const openConvo = (u: { id: number; username: string; avatar_color: string; is_online: boolean; user_status?: string; status?: string }) => {
+    const convo: Convo = {
+      user_id: u.id,
+      username: u.username,
+      avatar_color: u.avatar_color,
+      status: u.user_status || u.status || "offline",
+      last_msg: "",
+      last_time: "",
+      is_online: u.is_online,
+    };
+    setActiveConvo(convo);
+    setMenuMsgId(null);
+    setEditingId(null);
+    setTimeout(() => inputRef.current?.focus(), 100);
+  };
+
+  // ── Отправить сообщение ────────────────────────────────
+  const sendMsg = async () => {
+    if (!input.trim() || !activeConvo) return;
+    const text = input.trim();
+    setInput("");
+    try {
+      const res = await fetch(DM_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from_user_id: user.id, to_user_id: activeConvo.user_id, text }),
+      });
+      const data = await res.json();
+      if (data.id) {
+        setMsgs(prev => [...prev, data]);
+        lastIdRef.current = data.id;
+        setTimeout(() => msgsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+        fetchConvos();
+      }
     } catch { /* silent */ }
   };
 
-  useEffect(() => {
-    msgsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeDM]);
-
-  useEffect(() => {
-    if (dmPollingRef.current) clearInterval(dmPollingRef.current);
-    if (!activeDM) return;
-    const friend = friends.find(f => f.id === activeDM);
-    if (!friend) return;
-    setMsgs(prev => ({ ...prev, [activeDM]: [] }));
-    dmLastIdRef.current[activeDM] = 0;
-    fetchDMs(activeDM, friend.userId ?? activeDM);
-    dmPollingRef.current = setInterval(() => fetchDMs(activeDM, friend.userId ?? activeDM), 2000);
-    return () => { if (dmPollingRef.current) clearInterval(dmPollingRef.current); };
-  }, [activeDM]);
-
-  useEffect(() => {
-    if (callActive) {
-      timerRef.current = setInterval(() => setCallTimer(t => t + 1), 1000);
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
-      setCallTimer(0);
-    }
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [callActive]);
-
-  const fmtTime = (s: number) =>
-    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-
-  const activeFriend = friends.find(f => f.id === activeDM);
-
-  const startCall = (f: typeof FRIENDS[0], video = false) => {
-    setCallFriend(f); setCallVideo(video); setCallActive(true);
-    setCallMuted(false); setCallDeaf(false);
+  // ── Редактировать сообщение ────────────────────────────
+  const editMsg = async (id: number, text: string) => {
+    try {
+      await fetch(DM_URL, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "edit", id, user_id: user.id, text }),
+      });
+      setMsgs(prev => prev.map(m => m.id === id ? { ...m, text, edited: true } : m));
+      setEditingId(null);
+      setEditText("");
+    } catch { /* silent */ }
   };
-  const endCall = () => { setCallActive(false); setCallFriend(null); };
 
-  const sendMsg = async () => {
-    if (!input.trim() || !activeDM) return;
-    const text = input.trim();
-    setInput("");
-    const friend = friends.find(f => f.id === activeDM);
-    if (!friend) return;
+  // ── Удалить сообщение ──────────────────────────────────
+  const removeMsg = async (id: number) => {
+    try {
+      await fetch(DM_URL, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove", id, user_id: user.id }),
+      });
+      setMsgs(prev => prev.map(m => m.id === id ? { ...m, text: "Сообщение удалено", is_removed: true } : m));
+      setMenuMsgId(null);
+    } catch { /* silent */ }
+  };
+
+  // ── Добавить друга ─────────────────────────────────────
+  const addFriend = async () => {
+    if (!addInput.trim()) return;
+    setAddStatus("sending");
+    setAddError("");
+    try {
+      const res = await fetch(DM_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "add_friend", user_id: user.id, username: addInput.trim() }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setAddStatus("sent");
+        setAddInput("");
+        fetchFriends();
+        setTimeout(() => setAddStatus("idle"), 3000);
+      } else {
+        setAddStatus("error");
+        setAddError(data.error === "user not found" ? "Пользователь не найден" : data.error || "Ошибка");
+        setTimeout(() => setAddStatus("idle"), 3000);
+      }
+    } catch {
+      setAddStatus("error");
+      setAddError("Ошибка соединения");
+      setTimeout(() => setAddStatus("idle"), 3000);
+    }
+  };
+
+  // ── Принять/отклонить заявку ───────────────────────────
+  const respondFriend = async (friendId: number, accept: boolean) => {
     try {
       await fetch(DM_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          from_user_id: user.id,
-          to_user_id: friend.userId ?? activeDM,
-          text,
-        }),
+        body: JSON.stringify({ action: "respond_friend", user_id: user.id, friend_id: friendId, accept }),
       });
-      fetchDMs(activeDM, friend.userId ?? activeDM);
+      fetchFriends();
     } catch { /* silent */ }
   };
 
-  const filteredFriends = friends.filter(f => {
-    const matchSearch = f.name.toLowerCase().includes(friendSearch.toLowerCase());
-    if (friendFilter === "online") return matchSearch && f.status !== "offline";
-    if (friendFilter === "offline") return matchSearch && f.status === "offline";
-    return matchSearch;
-  });
+  // ── Удалить друга ──────────────────────────────────────
+  const removeFriend = async (friendId: number) => {
+    try {
+      await fetch(DM_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove_friend", user_id: user.id, friend_id: friendId }),
+      });
+      fetchFriends();
+    } catch { /* silent */ }
+  };
 
-  const dmFriends = friends.filter(f => msgs[f.id]);
+  // ── Поиск пользователей ────────────────────────────────
+  const doSearch = async (q: string) => {
+    setSearchQuery(q);
+    if (q.trim().length < 2) { setSearchResults([]); return; }
+    setSearching(true);
+    try {
+      const res = await fetch(`${DM_URL}?action=search_users&q=${encodeURIComponent(q)}&user_id=${user.id}`);
+      const data = await res.json();
+      setSearchResults(data.users || []);
+    } catch { /* silent */ }
+    setSearching(false);
+  };
 
+  // ── Sidebar фильтр ─────────────────────────────────────
+  const filteredConvos = convos.filter(c =>
+    c.username.toLowerCase().includes(sidebarSearch.toLowerCase())
+  );
+
+  const incomingPending = pending.filter(f => f.direction === "incoming");
+  const outgoingPending = pending.filter(f => f.direction === "outgoing");
+
+  // ── Рендер ─────────────────────────────────────────────
   return (
-    <div className="flex flex-1 min-w-0 overflow-hidden">
+    <div className="flex h-screen overflow-hidden" style={{ fontFamily: "IBM Plex Sans, sans-serif", background: "var(--dark-bg)" }}
+      onClick={() => { setMenuMsgId(null); setEmojiPickerMsgId(null); }}>
 
-      {/* Profile modal */}
-      {profileUser && (
-        <ProfileModal
-          member={{ id: profileUser.id, name: profileUser.name, color: profileUser.color, role: "Друг", roleColor: profileUser.color, status: profileUser.status, avatar: profileUser.avatar, game: profileUser.game, mutual: profileUser.mutual }}
-          onClose={() => setProfileUser(null)}
-          onMessage={() => { setActiveDM(profileUser.id); setSection("chat"); setProfileUser(null); }}
-          onCall={() => { startCall(profileUser); setProfileUser(null); }}
-        />
-      )}
+      {/* Сайдбар */}
+      <div className="flex flex-col w-60 shrink-0" style={{ background: "var(--dark-panel)", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
 
-      {/* Active call overlay */}
-      {callActive && callFriend && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: "rgba(0,0,0,0.88)" }}>
-          <div className="w-96 rounded-2xl overflow-hidden shadow-2xl" style={{ background: "var(--dark-panel)", border: `2px solid ${callFriend.color}33` }}>
-            {/* Call header */}
-            <div className="px-6 py-4 flex items-center gap-2" style={{ background: callFriend.color + "10", borderBottom: `1px solid ${callFriend.color}22` }}>
-              <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: callFriend.color }} />
-              <span style={{ ...rF, fontWeight: 700, fontSize: "13px", color: callFriend.color }}>
-                {callVideo ? "Видеозвонок" : "Голосовой звонок"}
-              </span>
-              <span style={{ ...rF, fontWeight: 600, fontSize: "13px", color: "#6b7fa3", marginLeft: "auto" }}>
-                {fmtTime(callTimer)}
-              </span>
-            </div>
+        {/* Поиск в сайдбаре */}
+        <div className="px-3 pt-3 pb-2">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl" style={{ background: "#0d1424", border: "1px solid rgba(255,255,255,0.07)" }}>
+            <Icon name="Search" size={13} style={{ color: "#6b7fa3" }} />
+            <input
+              value={sidebarSearch}
+              onChange={e => setSidebarSearch(e.target.value)}
+              placeholder="Найти диалог..."
+              className="bg-transparent outline-none flex-1"
+              style={{ ...iF, fontSize: "13px", color: "#e2e8f0" }}
+            />
+          </div>
+        </div>
 
-            <div className="p-8 flex flex-col items-center gap-5">
-              {/* Avatar with pulse ring */}
-              <div className="relative">
-                <div className="absolute -inset-3 rounded-full border-2 animate-ping opacity-20" style={{ borderColor: callFriend.color }} />
-                <div className="w-24 h-24 rounded-full flex items-center justify-center" style={{ background: callFriend.color + "22", border: `3px solid ${callFriend.color}`, boxShadow: `0 0 40px ${callFriend.color}44` }}>
-                  <span style={{ ...rF, fontWeight: 900, fontSize: "28px", color: callFriend.color }}>{callFriend.avatar}</span>
+        {/* Кнопка "Друзья" */}
+        <button
+          onClick={() => { setActiveConvo(null); setTab("friends"); }}
+          className="flex items-center gap-3 mx-2 px-3 py-2 rounded-xl mb-1 transition-all"
+          style={{ background: !activeConvo && tab === "friends" ? "rgba(0,255,136,0.1)" : "transparent", color: !activeConvo && tab === "friends" ? "#00ff88" : "#8899bb" }}>
+          <Icon name="Users" size={16} />
+          <span style={{ ...rF, fontWeight: 700, fontSize: "14px" }}>Друзья</span>
+          {incomingPending.length > 0 && (
+            <span className="ml-auto w-5 h-5 rounded-full flex items-center justify-center text-white font-bold" style={{ background: "#ff00aa", fontSize: "10px" }}>
+              {incomingPending.length}
+            </span>
+          )}
+        </button>
+
+        {/* Диалоги */}
+        {filteredConvos.length > 0 && (
+          <div className="px-3 mb-1">
+            <span style={{ ...rF, fontWeight: 600, fontSize: "10px", color: "#4a5568", textTransform: "uppercase", letterSpacing: "1px" }}>
+              Сообщения
+            </span>
+          </div>
+        )}
+        <div className="flex-1 overflow-y-auto px-2 space-y-0.5">
+          {filteredConvos.map(c => (
+            <button key={c.user_id}
+              onClick={() => openConvo(c)}
+              className="w-full flex items-center gap-2 px-2 py-2 rounded-xl transition-all text-left group"
+              style={{ background: activeConvo?.user_id === c.user_id ? "rgba(0,255,136,0.1)" : "transparent" }}
+              onMouseEnter={e => { if (activeConvo?.user_id !== c.user_id) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
+              onMouseLeave={e => { if (activeConvo?.user_id !== c.user_id) e.currentTarget.style.background = "transparent"; }}>
+              <div className="relative shrink-0">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center"
+                  style={{ background: c.avatar_color + "22", color: c.avatar_color, border: `1px solid ${c.avatar_color}33`, ...rF, fontWeight: 700, fontSize: "11px" }}>
+                  {c.username.slice(0, 2).toUpperCase()}
                 </div>
+                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2"
+                  style={{ background: c.is_online ? STATUS_COLOR.online : STATUS_COLOR.offline, borderColor: "var(--dark-panel)" }} />
               </div>
-
-              <div className="text-center">
-                <div style={{ ...rF, fontWeight: 900, fontSize: "24px", color: callFriend.color }}>{callFriend.name}</div>
-                <div style={{ ...iF, fontSize: "13px", color: "#6b7fa3", marginTop: "4px" }}>
-                  {callActive ? `Идёт ${callTimer > 0 ? fmtTime(callTimer) : "..."}` : "Вызов..."}
+              <div className="flex-1 min-w-0">
+                <div style={{ ...rF, fontWeight: 700, fontSize: "13px", color: activeConvo?.user_id === c.user_id ? "#00ff88" : "#e2e8f0" }}>
+                  {c.username}
                 </div>
-              </div>
-
-              {/* Video placeholder */}
-              {callVideo && (
-                <div className="w-full h-36 rounded-2xl flex items-center justify-center" style={{ background: "rgba(170,0,255,0.07)", border: "1px solid rgba(170,0,255,0.2)" }}>
-                  <div className="flex flex-col items-center gap-2">
-                    <Icon name="Video" size={28} style={{ color: "#aa00ff" }} />
-                    <span style={{ ...rF, fontWeight: 600, fontSize: "12px", color: "#6b7fa3" }}>HD видео · 1080p</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Controls */}
-              <div className="flex items-center gap-4">
-                <div className="flex flex-col items-center gap-1">
-                  <button onClick={() => setCallMuted(v => !v)} className="w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-110"
-                    style={{ background: callMuted ? "rgba(255,68,68,0.25)" : "rgba(255,255,255,0.08)", border: `1px solid ${callMuted ? "rgba(255,68,68,0.4)" : "rgba(255,255,255,0.12)"}` }}>
-                    <Icon name={callMuted ? "MicOff" : "Mic"} size={20} style={{ color: callMuted ? "#ff4444" : "#e2e8f0" }} />
-                  </button>
-                  <span style={{ ...rF, fontSize: "10px", color: "#6b7fa3" }}>{callMuted ? "Включить" : "Откл. мик"}</span>
-                </div>
-
-                <div className="flex flex-col items-center gap-1">
-                  <button onClick={endCall} className="w-14 h-14 rounded-full flex items-center justify-center transition-all hover:scale-110 hover:brightness-110"
-                    style={{ background: "#ff4444", boxShadow: "0 0 24px rgba(255,68,68,0.5)" }}>
-                    <Icon name="PhoneOff" size={24} style={{ color: "#fff" }} />
-                  </button>
-                  <span style={{ ...rF, fontSize: "10px", color: "#ff4444" }}>Завершить</span>
-                </div>
-
-                <div className="flex flex-col items-center gap-1">
-                  <button onClick={() => setCallDeaf(v => !v)} className="w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-110"
-                    style={{ background: callDeaf ? "rgba(255,68,68,0.25)" : "rgba(255,255,255,0.08)", border: `1px solid ${callDeaf ? "rgba(255,68,68,0.4)" : "rgba(255,255,255,0.12)"}` }}>
-                    <Icon name={callDeaf ? "VolumeX" : "Volume2"} size={20} style={{ color: callDeaf ? "#ff4444" : "#e2e8f0" }} />
-                  </button>
-                  <span style={{ ...rF, fontSize: "10px", color: "#6b7fa3" }}>{callDeaf ? "Включить" : "Заглушить"}</span>
-                </div>
-
-                {!callVideo && (
-                  <div className="flex flex-col items-center gap-1">
-                    <button onClick={() => setCallVideo(true)} className="w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-110"
-                      style={{ background: "rgba(170,0,255,0.15)", border: "1px solid rgba(170,0,255,0.3)" }}>
-                      <Icon name="Video" size={20} style={{ color: "#aa00ff" }} />
-                    </button>
-                    <span style={{ ...rF, fontSize: "10px", color: "#6b7fa3" }}>Видео</span>
+                {c.last_msg && (
+                  <div style={{ ...iF, fontSize: "11px", color: "#4a5568", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {c.last_msg.slice(0, 25)}{c.last_msg.length > 25 ? "…" : ""}
                   </div>
                 )}
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ══════════ LEFT PANEL — DM list ══════════ */}
-      <div className="w-64 shrink-0 flex flex-col" style={{ background: "var(--dark-panel)", borderRight: "1px solid rgba(0,170,255,0.08)" }}>
-
-        {/* Header */}
-        <div className="px-4 py-3" style={{ borderBottom: "1px solid rgba(0,170,255,0.08)" }}>
-          <div style={{ ...rF, fontWeight: 800, fontSize: "13px", color: "#00aaff", letterSpacing: "1px" }}>ЛИЧНЫЕ СООБЩЕНИЯ</div>
-          <div style={{ ...iF, fontSize: "11px", color: "#6b7fa3", marginTop: "2px" }}>
-            {friends.filter(f => f.status !== "offline").length} друзей онлайн
-          </div>
-        </div>
-
-        {/* Nav tabs */}
-        <div className="flex gap-1 px-2 py-2">
-          {([
-            { id: "friends" as Section, icon: "Users",       label: "Друзья",   badge: 0 },
-            { id: "pending" as Section, icon: "UserPlus",    label: "Запросы",  badge: pending.filter(r => r.direction === "incoming").length },
-            { id: "blocked" as Section, icon: "UserX",       label: "Блок",     badge: 0 },
-          ]).map(item => (
-            <button key={item.id} onClick={() => setSection(item.id)}
-              className="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-lg transition-all duration-200 relative"
-              style={{ background: section === item.id ? "rgba(0,170,255,0.12)" : "transparent", color: section === item.id ? "#00aaff" : "#6b7fa3" }}>
-              <Icon name={item.icon} size={13} />
-              <span style={{ fontSize: "9px", ...rF, fontWeight: 600 }}>{item.label}</span>
-              {item.badge > 0 && (
-                <div className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: "#ff4444", color: "#fff", fontSize: "8px", fontWeight: 700 }}>{item.badge}</div>
-              )}
+              {c.last_time && <span style={{ ...iF, fontSize: "10px", color: "#4a5568" }}>{c.last_time}</span>}
             </button>
           ))}
         </div>
 
-        {/* DM history */}
-        <div className="px-2 pb-1">
-          <div style={{ ...rF, fontWeight: 600, fontSize: "9px", color: "#4a5568", textTransform: "uppercase", letterSpacing: "1px", padding: "4px 6px" }}>Недавние</div>
-          <div className="space-y-0.5">
-            {dmFriends.map(f => {
-              const lastMsg = (msgs[f.id] || []).slice(-1)[0];
-              const isActive = activeDM === f.id && section === "chat";
-              return (
-                <button key={f.id} onClick={() => { setActiveDM(f.id); setSection("chat"); }}
-                  className="w-full flex items-center gap-2.5 px-2 py-2 rounded-xl transition-all text-left"
-                  style={{ background: isActive ? f.color + "15" : "transparent", border: isActive ? `1px solid ${f.color}22` : "1px solid transparent" }}>
-                  <div className="relative shrink-0">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: f.color + "22", color: f.color, border: `1px solid ${f.color}33`, ...rF, fontWeight: 700, fontSize: "10px" }}>
-                      {f.avatar}
-                    </div>
-                    <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2" style={{ background: STATUS_COLOR[f.status], borderColor: "var(--dark-panel)" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ ...rF, fontWeight: 700, fontSize: "13px", color: isActive ? f.color : "#c8d6e8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</div>
-                    <div style={{ ...iF, fontSize: "10px", color: "#6b7fa3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {lastMsg ? (lastMsg.from === "me" ? `Ты: ${lastMsg.text}` : lastMsg.text) : "Нет сообщений"}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="h-px mx-3 my-1" style={{ background: "rgba(255,255,255,0.05)" }} />
-
-        {/* New DM button */}
-        <div className="px-3 pb-2">
-          <button onClick={() => setSection("friends")} className="w-full flex items-center gap-2 px-3 py-2 rounded-xl transition-all hover:opacity-80"
-            style={{ background: "rgba(0,170,255,0.08)", border: "1px solid rgba(0,170,255,0.2)", color: "#00aaff" }}>
-            <Icon name="Plus" size={13} />
-            <span style={{ ...rF, fontWeight: 700, fontSize: "12px" }}>Новый диалог</span>
-          </button>
-        </div>
-
-        {/* User footer */}
-        <div className="px-2 py-2 mt-auto" style={{ borderTop: "1px solid rgba(0,170,255,0.08)" }}>
-          <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: `${myStatusColor}08` }}>
-            <button className="relative shrink-0" onClick={onOpenStatusMenu}>
-              <UserAvatar
-                username={user.username}
-                color={user.avatar_color}
-                avatarImg={avatarImg}
-                size={28}
-                showStatus
-                status={myStatusDot.replace("status-", "")}
-              />
+        {/* Футер пользователя */}
+        <div className="px-2 py-2 mt-auto" style={{ borderTop: "1px solid rgba(0,255,136,0.08)" }}>
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded-xl" style={{ background: "rgba(255,255,255,0.03)" }}>
+            <div className="relative cursor-pointer" onClick={onOpenStatusMenu}>
+              <UserAvatar username={user.username} color={user.avatar_color} avatarImg={avatarImg} size={32} />
+              <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2" style={{ background: myStatusColor, borderColor: "var(--dark-panel)" }} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div style={{ ...rF, fontWeight: 700, fontSize: "13px", color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.username}</div>
+              <div style={{ ...iF, fontSize: "10px", color: myStatusColor }}>{myStatusLabel}</div>
+            </div>
+            <button onClick={onOpenSettings} className="hover:opacity-70 transition-opacity">
+              <Icon name="Settings" size={14} style={{ color: "#6b7fa3" }} />
             </button>
-            <div className="flex-1 min-w-0 cursor-pointer" onClick={onOpenStatusMenu}>
-              <div style={{ ...rF, fontWeight: 600, fontSize: "13px", color: user.avatar_color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.username}</div>
-              <div style={{ fontSize: "10px", color: myStatusColor }}>{myStatusLabel}</div>
-            </div>
-            <div className="flex gap-1">
-              <button onClick={onToggleMic} className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70" style={{ background: micMuted ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.05)" }}>
-                <Icon name={micMuted ? "MicOff" : "Mic"} size={12} style={{ color: micMuted ? "#ff4444" : "#6b7fa3" }} />
-              </button>
-              <button onClick={onToggleDeaf} className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70" style={{ background: headphonesDeaf ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.05)" }}>
-                <Icon name={headphonesDeaf ? "VolumeX" : "Headphones"} size={12} style={{ color: headphonesDeaf ? "#ff4444" : "#6b7fa3" }} />
-              </button>
-              <button onClick={onOpenSettings} className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70" style={{ background: "rgba(255,255,255,0.05)" }}>
-                <Icon name="Settings" size={12} style={{ color: "#6b7fa3" }} />
-              </button>
-            </div>
+            <button onClick={onToggleMic} className="hover:opacity-70 transition-opacity">
+              <Icon name={micMuted ? "MicOff" : "Mic"} size={14} style={{ color: micMuted ? "#ff4444" : "#6b7fa3" }} />
+            </button>
+            <button onClick={onToggleDeaf} className="hover:opacity-70 transition-opacity">
+              <Icon name={headphonesDeaf ? "VolumeX" : "Headphones"} size={14} style={{ color: headphonesDeaf ? "#ff4444" : "#6b7fa3" }} />
+            </button>
           </div>
         </div>
       </div>
 
-      {/* ══════════ RIGHT CONTENT ══════════ */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* Основная зона */}
+      {activeConvo ? (
+        /* ── ЧАТ ───────────────────────────────────────────── */
+        <div className="flex-1 flex flex-col min-w-0">
 
-        {/* FRIENDS */}
-        {section === "friends" && (
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Header */}
-            <div className="px-5 py-3 flex items-center gap-3 shrink-0" style={{ background: "var(--dark-panel)", borderBottom: "1px solid rgba(0,170,255,0.08)" }}>
-              <Icon name="Users" size={18} style={{ color: "#00aaff" }} />
-              <span style={{ ...rF, fontWeight: 700, fontSize: "16px", color: "#e2e8f0" }}>Друзья</span>
-              <div className="flex gap-1 ml-3">
-                {(["online", "all", "offline"] as const).map(f => (
-                  <button key={f} onClick={() => setFriendFilter(f)} className="px-3 py-1 rounded-lg transition-all"
-                    style={{ background: friendFilter === f ? "rgba(0,170,255,0.15)" : "rgba(255,255,255,0.05)", color: friendFilter === f ? "#00aaff" : "#6b7fa3", border: friendFilter === f ? "1px solid rgba(0,170,255,0.3)" : "1px solid transparent", ...rF, fontWeight: 700, fontSize: "12px" }}>
-                    {f === "online" ? `Онлайн (${friends.filter(fr => fr.status !== "offline").length})` : f === "all" ? "Все" : "Офлайн"}
-                  </button>
-                ))}
+          {/* Шапка */}
+          <div className="flex items-center gap-3 px-4 py-3 shrink-0" style={{ borderBottom: "1px solid rgba(0,255,136,0.08)", background: "var(--dark-panel)" }}>
+            <button onClick={() => setActiveConvo(null)} className="hover:opacity-70 transition-opacity mr-1">
+              <Icon name="ChevronLeft" size={18} style={{ color: "#6b7fa3" }} />
+            </button>
+            <div className="relative">
+              <div className="w-9 h-9 rounded-full flex items-center justify-center"
+                style={{ background: activeConvo.avatar_color + "22", color: activeConvo.avatar_color, border: `2px solid ${activeConvo.avatar_color}44`, ...rF, fontWeight: 700, fontSize: "12px" }}>
+                {activeConvo.username.slice(0, 2).toUpperCase()}
               </div>
-              <button onClick={() => setSection("pending")} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-xl hover:opacity-80 transition-all"
-                style={{ background: "rgba(0,255,136,0.1)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.25)", ...rF, fontWeight: 700, fontSize: "12px" }}>
-                <Icon name="UserPlus" size={13} /> Добавить друга
+              <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2"
+                style={{ background: activeConvo.is_online ? STATUS_COLOR.online : STATUS_COLOR.offline, borderColor: "var(--dark-panel)" }} />
+            </div>
+            <div>
+              <div style={{ ...rF, fontWeight: 700, fontSize: "16px", color: activeConvo.avatar_color }}>{activeConvo.username}</div>
+              <div style={{ ...iF, fontSize: "11px", color: activeConvo.is_online ? STATUS_COLOR.online : "#6b7fa3" }}>
+                {activeConvo.is_online ? "В сети" : "Не в сети"}
+              </div>
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <button className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(0,255,136,0.08)" }} title="Позвонить">
+                <Icon name="Phone" size={15} style={{ color: "#00ff88" }} />
+              </button>
+              <button className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(0,170,255,0.08)" }} title="Видеозвонок">
+                <Icon name="Video" size={15} style={{ color: "#00aaff" }} />
+              </button>
+              <button className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(255,255,255,0.05)" }} title="Профиль">
+                <Icon name="User" size={15} style={{ color: "#6b7fa3" }} />
               </button>
             </div>
+          </div>
 
-            {/* Search */}
-            <div className="px-5 py-3 shrink-0" style={{ background: "var(--dark-bg)" }}>
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}>
-                <Icon name="Search" size={14} style={{ color: "#6b7fa3" }} />
-                <input className="flex-1 bg-transparent outline-none text-sm" placeholder="Поиск друзей..."
-                  value={friendSearch} onChange={e => setFriendSearch(e.target.value)}
-                  style={{ color: "#e2e8f0", ...iF }} />
+          {/* Сообщения */}
+          <div className="flex-1 overflow-y-auto px-4 py-4" onClick={() => { setMenuMsgId(null); setEmojiPickerMsgId(null); }}>
+            {loadingMsgs && (
+              <div className="flex justify-center py-8">
+                <Icon name="Loader2" size={20} style={{ color: "#6b7fa3" }} className="animate-spin" />
               </div>
+            )}
+
+            {!loadingMsgs && msgs.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-full gap-4 py-16">
+                <div className="w-20 h-20 rounded-full flex items-center justify-center"
+                  style={{ background: activeConvo.avatar_color + "22", color: activeConvo.avatar_color, border: `3px solid ${activeConvo.avatar_color}33`, ...rF, fontWeight: 900, fontSize: "24px" }}>
+                  {activeConvo.username.slice(0, 2).toUpperCase()}
+                </div>
+                <div style={{ ...rF, fontWeight: 700, fontSize: "22px", color: "#e2e8f0" }}>{activeConvo.username}</div>
+                <div style={{ ...iF, fontSize: "14px", color: "#6b7fa3" }}>Начало вашего диалога с {activeConvo.username}</div>
+              </div>
+            )}
+
+            {/* Группировка по дате */}
+            {(() => {
+              let lastDate = "";
+              return msgs.map((msg, i) => {
+                const showDate = msg.date && msg.date !== lastDate;
+                if (msg.date) lastDate = msg.date;
+                const isMe = msg.from_user_id === user.id;
+                const showAvatar = i === 0 || msgs[i - 1]?.from_user_id !== msg.from_user_id;
+
+                return (
+                  <div key={msg.id}>
+                    {showDate && (
+                      <div className="flex items-center gap-3 my-4">
+                        <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.06)" }} />
+                        <span style={{ ...iF, fontSize: "11px", color: "#4a5568" }}>{msg.date}</span>
+                        <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.06)" }} />
+                      </div>
+                    )}
+                    <div
+                      className={`flex gap-2 group relative ${showAvatar ? "mt-3" : "mt-0.5"} ${isMe ? "flex-row-reverse" : "flex-row"}`}
+                      onMouseLeave={() => { setMenuMsgId(null); setEmojiPickerMsgId(null); }}>
+
+                      {/* Аватар */}
+                      <div className="shrink-0 w-8" style={{ alignSelf: "flex-end" }}>
+                        {showAvatar && !isMe && (
+                          <div className="w-8 h-8 rounded-full flex items-center justify-center"
+                            style={{ background: activeConvo.avatar_color + "22", color: activeConvo.avatar_color, border: `1px solid ${activeConvo.avatar_color}33`, ...rF, fontWeight: 700, fontSize: "10px" }}>
+                            {activeConvo.username.slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                        {showAvatar && isMe && (
+                          <UserAvatar username={user.username} color={user.avatar_color} avatarImg={avatarImg} size={32} />
+                        )}
+                      </div>
+
+                      {/* Пузырь */}
+                      <div className={`max-w-[70%] ${isMe ? "items-end" : "items-start"} flex flex-col`}>
+                        {showAvatar && (
+                          <div className={`flex items-baseline gap-2 mb-1 ${isMe ? "flex-row-reverse" : ""}`}>
+                            <span style={{ ...rF, fontWeight: 700, fontSize: "13px", color: isMe ? user.avatar_color : activeConvo.avatar_color }}>
+                              {isMe ? user.username : activeConvo.username}
+                            </span>
+                            <span style={{ ...iF, fontSize: "10px", color: "#4a5568" }}>{msg.time}</span>
+                          </div>
+                        )}
+
+                        {editingId === msg.id ? (
+                          <div className="flex gap-2 w-full">
+                            <input
+                              className="flex-1 px-3 py-1.5 rounded-xl outline-none text-sm"
+                              style={{ background: "rgba(0,255,136,0.08)", border: "1px solid rgba(0,255,136,0.3)", color: "#e2e8f0", ...iF }}
+                              value={editText}
+                              onChange={e => setEditText(e.target.value)}
+                              onKeyDown={e => { if (e.key === "Enter") editMsg(msg.id, editText); if (e.key === "Escape") { setEditingId(null); setEditText(""); } }}
+                              autoFocus
+                            />
+                            <button onClick={() => editMsg(msg.id, editText)} style={{ ...rF, fontWeight: 700, fontSize: "12px", background: "rgba(0,255,136,0.15)", color: "#00ff88", border: "none", borderRadius: "8px", padding: "4px 12px", cursor: "pointer" }}>ОК</button>
+                            <button onClick={() => { setEditingId(null); setEditText(""); }} style={{ ...iF, fontSize: "12px", background: "none", color: "#6b7fa3", border: "none", cursor: "pointer" }}>✕</button>
+                          </div>
+                        ) : (
+                          <div className="relative">
+                            {/* Контекст-кнопки при hover */}
+                            <div className={`absolute top-0 ${isMe ? "left-0 -translate-x-full pr-1" : "right-0 translate-x-full pl-1"} opacity-0 group-hover:opacity-100 transition-opacity flex gap-1`}
+                              onClick={e => e.stopPropagation()}>
+                              <button
+                                className="w-6 h-6 rounded-lg flex items-center justify-center hover:opacity-80"
+                                style={{ background: "#0d1424", border: "1px solid rgba(0,255,136,0.15)" }}
+                                onClick={() => setEmojiPickerMsgId(emojiPickerMsgId === msg.id ? null : msg.id)}
+                                title="Реакция">
+                                <Icon name="Smile" size={12} style={{ color: "#6b7fa3" }} />
+                              </button>
+                              {isMe && !msg.is_removed && (
+                                <button
+                                  className="w-6 h-6 rounded-lg flex items-center justify-center hover:opacity-80"
+                                  style={{ background: "#0d1424", border: "1px solid rgba(0,255,136,0.15)" }}
+                                  onClick={() => setMenuMsgId(menuMsgId === msg.id ? null : msg.id)}
+                                  title="Ещё">
+                                  <Icon name="MoreHorizontal" size={12} style={{ color: "#6b7fa3" }} />
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Эмодзи пикер */}
+                            {emojiPickerMsgId === msg.id && (
+                              <div className={`absolute z-50 bottom-full mb-1 ${isMe ? "right-0" : "left-0"} flex gap-1 p-2 rounded-xl`}
+                                style={{ background: "#0d1424", border: "1px solid rgba(0,255,136,0.2)", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}
+                                onClick={e => e.stopPropagation()}>
+                                {EMOJI_LIST.map(emoji => (
+                                  <button key={emoji} className="text-lg hover:scale-125 transition-transform w-7 h-7 flex items-center justify-center rounded"
+                                    title={emoji}
+                                    onClick={() => { setEmojiPickerMsgId(null); }}>
+                                    {emoji}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Контекстное меню */}
+                            {menuMsgId === msg.id && (
+                              <div className={`absolute z-50 bottom-full mb-1 ${isMe ? "right-0" : "left-0"} rounded-xl overflow-hidden`}
+                                style={{ background: "#0d1424", border: "1px solid rgba(255,68,68,0.2)", minWidth: "140px", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}
+                                onClick={e => e.stopPropagation()}>
+                                <button className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-white hover:bg-opacity-5 transition-colors"
+                                  onClick={() => { setEditingId(msg.id); setEditText(msg.text); setMenuMsgId(null); }}
+                                  style={{ ...rF, fontWeight: 600, fontSize: "13px", color: "#00ff88" }}>
+                                  <Icon name="Pencil" size={12} /> Редактировать
+                                </button>
+                                <button className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-white hover:bg-opacity-5 transition-colors"
+                                  onClick={() => removeMsg(msg.id)}
+                                  style={{ ...rF, fontWeight: 600, fontSize: "13px", color: "#ff4444" }}>
+                                  <Icon name="Trash2" size={12} /> Удалить
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Сам пузырь */}
+                            <div className="px-3 py-2 rounded-2xl"
+                              style={{
+                                background: isMe
+                                  ? `linear-gradient(135deg, ${user.avatar_color}22, ${user.avatar_color}11)`
+                                  : "rgba(255,255,255,0.06)",
+                                border: isMe
+                                  ? `1px solid ${user.avatar_color}33`
+                                  : "1px solid rgba(255,255,255,0.08)",
+                                borderBottomRightRadius: isMe ? "6px" : "18px",
+                                borderBottomLeftRadius: isMe ? "18px" : "6px",
+                              }}>
+                              {/* Файл */}
+                              {msg.file_url && !msg.is_removed && (
+                                <div className="mb-2">
+                                  {msg.file_type?.startsWith("image/") ? (
+                                    <img src={msg.file_url} alt={msg.file_name || "file"} className="rounded-xl max-h-48 max-w-xs object-cover cursor-pointer hover:opacity-90 transition-opacity" onClick={() => window.open(msg.file_url, "_blank")} />
+                                  ) : (
+                                    <a href={msg.file_url} target="_blank" rel="noopener noreferrer"
+                                      className="flex items-center gap-2 px-3 py-2 rounded-lg hover:opacity-80 transition-opacity"
+                                      style={{ background: "rgba(0,255,136,0.08)", border: "1px solid rgba(0,255,136,0.15)" }}>
+                                      <Icon name="File" size={14} style={{ color: "#00ff88" }} />
+                                      <span style={{ ...iF, fontSize: "12px", color: "#e2e8f0" }}>{msg.file_name}</span>
+                                    </a>
+                                  )}
+                                </div>
+                              )}
+                              <p style={{
+                                ...iF, fontSize: "14px", lineHeight: "1.5",
+                                color: msg.is_removed ? "#4a5568" : "#e2e8f0",
+                                fontStyle: msg.is_removed ? "italic" : "normal",
+                                wordBreak: "break-word",
+                              }}>{msg.text}</p>
+                              {msg.edited && !msg.is_removed && (
+                                <span style={{ ...iF, fontSize: "10px", color: "#4a5568" }}> (изм.)</span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+            <div ref={msgsEndRef} />
+          </div>
+
+          {/* Поле ввода */}
+          <div className="px-4 py-3 shrink-0" style={{ borderTop: "1px solid rgba(0,255,136,0.08)" }}>
+            <div className="flex items-center gap-2 px-3 py-2 rounded-2xl" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(0,255,136,0.12)" }}>
+              <button onClick={() => fileInputRef.current?.click()} className="hover:opacity-70 transition-opacity" title="Прикрепить файл">
+                <Icon name="Paperclip" size={16} style={{ color: "#6b7fa3" }} />
+              </button>
+              <input
+                ref={inputRef}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendMsg()}
+                placeholder={`Написать ${activeConvo.username}...`}
+                className="flex-1 bg-transparent outline-none"
+                style={{ ...iF, fontSize: "14px", color: "#e2e8f0" }}
+              />
+              <button onClick={() => {}} className="hover:opacity-70 transition-opacity" title="Эмодзи">
+                <Icon name="Smile" size={16} style={{ color: "#6b7fa3" }} />
+              </button>
+              <button
+                onClick={sendMsg}
+                disabled={!input.trim()}
+                className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:opacity-90 disabled:opacity-30"
+                style={{ background: "rgba(0,255,136,0.15)", color: "#00ff88" }}>
+                <Icon name="Send" size={14} />
+              </button>
+            </div>
+            <input type="file" ref={fileInputRef} className="hidden" accept="image/*,video/*,.pdf,.txt" onChange={e => { e.target.value = ""; }} />
+          </div>
+        </div>
+      ) : (
+        /* ── ДРУЗЬЯ / ПОИСК ────────────────────────────────── */
+        <div className="flex-1 flex flex-col min-w-0">
+
+          {/* Шапка */}
+          <div className="flex items-center gap-4 px-6 py-3 shrink-0" style={{ borderBottom: "1px solid rgba(0,255,136,0.08)", background: "var(--dark-panel)" }}>
+            <Icon name="Users" size={18} style={{ color: "#00ff88" }} />
+            <span style={{ ...rF, fontWeight: 700, fontSize: "16px", color: "#e2e8f0" }}>Друзья</span>
+            <div className="h-5 w-px" style={{ background: "rgba(255,255,255,0.1)" }} />
+            {(["friends", "pending", "blocked"] as Tab[]).map(t => (
+              <button key={t} onClick={() => setTab(t)}
+                className="px-3 py-1 rounded-lg transition-all"
+                style={{
+                  ...rF, fontWeight: 700, fontSize: "13px",
+                  background: tab === t ? "rgba(0,255,136,0.12)" : "transparent",
+                  color: tab === t ? "#00ff88" : "#6b7fa3",
+                }}>
+                {t === "friends" ? `В сети (${friends.filter(f => f.is_online).length})` : t === "pending" ? `Ожидание${incomingPending.length ? ` (${incomingPending.length})` : ""}` : "Заблокированные"}
+              </button>
+            ))}
+            <div className="ml-auto">
+              <button
+                onClick={() => setTab("friends")}
+                className="px-4 py-1.5 rounded-xl transition-all hover:opacity-90"
+                style={{ ...rF, fontWeight: 700, fontSize: "13px", background: "rgba(0,255,136,0.15)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.3)" }}>
+                Добавить друга
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-6 py-4">
+
+            {/* Поиск */}
+            <div className="flex items-center gap-2 px-4 py-2 rounded-xl mb-5" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <Icon name={searching ? "Loader2" : "Search"} size={15} style={{ color: "#6b7fa3" }} className={searching ? "animate-spin" : ""} />
+              <input
+                value={searchQuery}
+                onChange={e => doSearch(e.target.value)}
+                placeholder="Найти или начать новый чат..."
+                className="flex-1 bg-transparent outline-none"
+                style={{ ...iF, fontSize: "14px", color: "#e2e8f0" }}
+              />
+              {searchQuery && <button onClick={() => { setSearchQuery(""); setSearchResults([]); }} style={{ color: "#4a5568", background: "none", border: "none", cursor: "pointer" }}>✕</button>}
             </div>
 
-            {/* Friends list */}
-            <div className="flex-1 overflow-y-auto px-5 pb-5" style={{ background: "var(--dark-bg)" }}>
-              {filteredFriends.length === 0 && (
-                <div className="flex flex-col items-center justify-center h-48 gap-3">
-                  <Icon name="Users" size={40} style={{ color: "#2a3a5c" }} />
-                  <div style={{ ...rF, fontWeight: 700, fontSize: "16px", color: "#4a5568" }}>Никого нет</div>
+            {/* Результаты поиска */}
+            {searchResults.length > 0 && (
+              <div className="mb-5">
+                <div style={{ ...rF, fontWeight: 600, fontSize: "11px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "8px" }}>
+                  Результаты поиска
                 </div>
-              )}
-              <div className="space-y-1">
-                {filteredFriends.map(friend => (
-                  <div key={friend.id} className="flex items-center gap-3 px-4 py-3 rounded-2xl transition-all group cursor-default"
-                    style={{ background: "var(--dark-card)", border: "1px solid rgba(255,255,255,0.04)" }}
-                    onMouseEnter={e => (e.currentTarget.style.borderColor = friend.color + "25")}
-                    onMouseLeave={e => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.04)")}>
-                    {/* Avatar */}
-                    <div className="relative shrink-0 cursor-pointer" onClick={() => setProfileUser(friend)}>
-                      <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: friend.color + "22", color: friend.color, border: `2px solid ${friend.color}33`, ...rF, fontWeight: 800, fontSize: "13px" }}>
-                        {friend.avatar}
+                {searchResults.map(u => (
+                  <div key={u.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1 group hover:bg-white hover:bg-opacity-5 transition-colors cursor-pointer"
+                    onClick={() => openConvo({ id: u.id, username: u.username, avatar_color: u.avatar_color, is_online: u.is_online, status: u.status })}>
+                    <div className="relative">
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center"
+                        style={{ background: u.avatar_color + "22", color: u.avatar_color, border: `1px solid ${u.avatar_color}33`, ...rF, fontWeight: 700, fontSize: "13px" }}>
+                        {u.username.slice(0, 2).toUpperCase()}
                       </div>
-                      <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2" style={{ background: STATUS_COLOR[friend.status], borderColor: "var(--dark-card)" }} />
+                      <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2"
+                        style={{ background: u.is_online ? STATUS_COLOR.online : STATUS_COLOR.offline, borderColor: "var(--dark-bg)" }} />
                     </div>
-                    {/* Info */}
-                    <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setProfileUser(friend)}>
-                      <div style={{ ...rF, fontWeight: 800, fontSize: "15px", color: friend.color }}>{friend.name}</div>
-                      <div style={{ ...iF, fontSize: "12px", color: "#6b7fa3" }}>
-                        {friend.status === "streaming"
-                          ? <span style={{ color: "#ff00aa" }}>{friend.game}</span>
-                          : friend.game || STATUS_LABEL[friend.status]}
+                    <div className="flex-1">
+                      <div style={{ ...rF, fontWeight: 700, fontSize: "15px", color: u.avatar_color }}>{u.username}</div>
+                      <div style={{ ...iF, fontSize: "12px", color: "#6b7fa3" }}>{u.is_online ? "В сети" : "Не в сети"}</div>
+                    </div>
+                    <button className="opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1.5 rounded-lg"
+                      style={{ ...rF, fontWeight: 700, fontSize: "12px", background: "rgba(0,255,136,0.12)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.25)" }}
+                      onClick={e => { e.stopPropagation(); openConvo({ id: u.id, username: u.username, avatar_color: u.avatar_color, is_online: u.is_online, status: u.status }); }}>
+                      Написать
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Вкладка Друзья */}
+            {tab === "friends" && !searchQuery && (
+              <>
+                <div style={{ ...rF, fontWeight: 600, fontSize: "11px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "8px" }}>
+                  Все друзья — {friends.length}
+                </div>
+                {friends.length === 0 && (
+                  <div className="text-center py-12" style={{ ...iF, fontSize: "14px", color: "#4a5568" }}>
+                    У тебя пока нет друзей. Добавь кого-нибудь!
+                  </div>
+                )}
+                {friends.map(f => (
+                  <div key={f.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1 group hover:bg-white hover:bg-opacity-5 transition-colors cursor-pointer"
+                    onClick={() => openConvo({ id: f.id, username: f.username, avatar_color: f.avatar_color, is_online: f.is_online, user_status: f.user_status })}>
+                    <div className="relative">
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center"
+                        style={{ background: f.avatar_color + "22", color: f.avatar_color, border: `1px solid ${f.avatar_color}33`, ...rF, fontWeight: 700, fontSize: "13px" }}>
+                        {f.username.slice(0, 2).toUpperCase()}
                       </div>
+                      <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2"
+                        style={{ background: f.is_online ? STATUS_COLOR.online : STATUS_COLOR.offline, borderColor: "var(--dark-bg)" }} />
                     </div>
-                    {/* Action buttons — show on hover */}
-                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => { setActiveDM(friend.id); setSection("chat"); }} title="Написать"
-                        className="w-9 h-9 rounded-xl flex items-center justify-center transition-all hover:scale-110"
-                        style={{ background: "rgba(0,170,255,0.12)", border: "1px solid rgba(0,170,255,0.25)" }}>
-                        <Icon name="MessageCircle" size={16} style={{ color: "#00aaff" }} />
+                    <div className="flex-1">
+                      <div style={{ ...rF, fontWeight: 700, fontSize: "15px", color: f.avatar_color }}>{f.username}</div>
+                      <div style={{ ...iF, fontSize: "12px", color: "#6b7fa3" }}>{f.is_online ? "В сети" : "Не в сети"}</div>
+                    </div>
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
+                      <button className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
+                        style={{ background: "rgba(0,255,136,0.1)", color: "#00ff88" }}
+                        onClick={e => { e.stopPropagation(); openConvo({ id: f.id, username: f.username, avatar_color: f.avatar_color, is_online: f.is_online, user_status: f.user_status }); }}
+                        title="Написать">
+                        <Icon name="MessageCircle" size={15} />
                       </button>
-                      <button onClick={() => startCall(friend)} title="Голосовой звонок"
-                        className="w-9 h-9 rounded-xl flex items-center justify-center transition-all hover:scale-110"
-                        style={{ background: "rgba(0,255,136,0.12)", border: "1px solid rgba(0,255,136,0.25)" }}>
-                        <Icon name="Phone" size={16} style={{ color: "#00ff88" }} />
-                      </button>
-                      <button onClick={() => startCall(friend, true)} title="Видеозвонок"
-                        className="w-9 h-9 rounded-xl flex items-center justify-center transition-all hover:scale-110"
-                        style={{ background: "rgba(170,0,255,0.12)", border: "1px solid rgba(170,0,255,0.25)" }}>
-                        <Icon name="Video" size={16} style={{ color: "#aa00ff" }} />
-                      </button>
-                      <button onClick={() => setProfileUser(friend)} title="Профиль"
-                        className="w-9 h-9 rounded-xl flex items-center justify-center transition-all hover:scale-110"
-                        style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                        <Icon name="UserCircle" size={16} style={{ color: "#6b7fa3" }} />
-                      </button>
-                      <button onClick={() => setFriends(prev => prev.filter(f => f.id !== friend.id))} title="Удалить из друзей"
-                        className="w-9 h-9 rounded-xl flex items-center justify-center transition-all hover:scale-110"
-                        style={{ background: "rgba(255,0,0,0.07)", border: "1px solid rgba(255,0,0,0.12)" }}>
-                        <Icon name="UserMinus" size={16} style={{ color: "#ff4444" }} />
+                      <button className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
+                        style={{ background: "rgba(255,100,0,0.1)", color: "#ff6600" }}
+                        onClick={e => { e.stopPropagation(); removeFriend(f.id); }}
+                        title="Удалить из друзей">
+                        <Icon name="UserMinus" size={15} />
                       </button>
                     </div>
                   </div>
                 ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* CHAT */}
-        {section === "chat" && activeFriend && (
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Chat header */}
-            <div className="px-5 py-3 flex items-center gap-3 shrink-0" style={{ background: "var(--dark-panel)", borderBottom: "1px solid rgba(0,170,255,0.08)" }}>
-              <div className="relative cursor-pointer" onClick={() => setProfileUser(activeFriend)}>
-                <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: activeFriend.color + "22", color: activeFriend.color, border: `2px solid ${activeFriend.color}44`, ...rF, fontWeight: 700, fontSize: "12px" }}>
-                  {activeFriend.avatar}
-                </div>
-                <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2" style={{ background: STATUS_COLOR[activeFriend.status], borderColor: "var(--dark-panel)" }} />
-              </div>
-              <div className="flex-1 cursor-pointer" onClick={() => setProfileUser(activeFriend)}>
-                <div style={{ ...rF, fontWeight: 800, fontSize: "16px", color: activeFriend.color }}>{activeFriend.name}</div>
-                <div style={{ ...iF, fontSize: "11px", color: "#6b7fa3" }}>
-                  {STATUS_LABEL[activeFriend.status]}{activeFriend.game ? ` · ${activeFriend.game}` : ""}
-                </div>
-              </div>
-              {/* Call buttons always visible */}
-              <div className="flex gap-2">
-                <button onClick={() => startCall(activeFriend)} className="flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all hover:opacity-90 active:scale-95"
-                  style={{ background: "rgba(0,255,136,0.12)", border: "1px solid rgba(0,255,136,0.25)", color: "#00ff88" }} title="Голосовой звонок">
-                  <Icon name="Phone" size={15} />
-                  <span style={{ ...rF, fontWeight: 700, fontSize: "12px" }}>Звонок</span>
-                </button>
-                <button onClick={() => startCall(activeFriend, true)} className="flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all hover:opacity-90 active:scale-95"
-                  style={{ background: "rgba(170,0,255,0.12)", border: "1px solid rgba(170,0,255,0.25)", color: "#aa00ff" }} title="Видеозвонок">
-                  <Icon name="Video" size={15} />
-                  <span style={{ ...rF, fontWeight: 700, fontSize: "12px" }}>Видео</span>
-                </button>
-                <button onClick={() => setProfileUser(activeFriend)} className="w-9 h-9 rounded-xl flex items-center justify-center hover:opacity-80 transition-all"
-                  style={{ background: "rgba(255,255,255,0.05)" }} title="Профиль">
-                  <Icon name="UserCircle" size={16} style={{ color: "#6b7fa3" }} />
-                </button>
-                <button className="w-9 h-9 rounded-xl flex items-center justify-center hover:opacity-80 transition-all"
-                  style={{ background: "rgba(255,255,255,0.05)" }}>
-                  <Icon name="Search" size={15} style={{ color: "#6b7fa3" }} />
-                </button>
-              </div>
-            </div>
-
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-3" style={{ background: "var(--dark-bg)" }}>
-              {/* Channel intro */}
-              <div className="flex flex-col items-center mb-8 gap-3">
-                <UserAvatar username={activeFriend.name} color={activeFriend.color} size={80} />
-                <div style={{ ...rF, fontWeight: 900, fontSize: "22px", color: activeFriend.color }}>{activeFriend.name}</div>
-                <div style={{ ...iF, fontSize: "13px", color: "#6b7fa3" }}>Начало личной переписки с {activeFriend.name}</div>
-                <div className="flex gap-2">
-                  <button onClick={() => startCall(activeFriend)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl transition-all hover:opacity-80"
-                    style={{ background: "rgba(0,255,136,0.1)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.25)", ...rF, fontWeight: 700, fontSize: "12px" }}>
-                    <Icon name="Phone" size={13} /> Позвонить
-                  </button>
-                  <button onClick={() => startCall(activeFriend, true)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl transition-all hover:opacity-80"
-                    style={{ background: "rgba(170,0,255,0.1)", color: "#aa00ff", border: "1px solid rgba(170,0,255,0.25)", ...rF, fontWeight: 700, fontSize: "12px" }}>
-                    <Icon name="Video" size={13} /> Видеозвонок
-                  </button>
-                </div>
-              </div>
-
-              {(msgs[activeDM!] || []).map(msg => (
-                <div key={msg.id} className={`flex items-end gap-2 ${msg.from === "me" ? "justify-end" : "justify-start"}`}>
-                  {msg.from === "them" && (
-                    <UserAvatar username={activeFriend.name} color={activeFriend.color} size={28} />
-                  )}
-                  {msg.type === "call" || msg.type === "vcall" ? (
-                    <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl"
-                      style={{ background: msg.from === "me" ? "rgba(0,255,136,0.08)" : "rgba(255,100,0,0.08)", border: `1px solid ${msg.from === "me" ? "rgba(0,255,136,0.2)" : "rgba(255,100,0,0.2)"}` }}>
-                      <Icon name={msg.type === "vcall" ? "Video" : (msg.from === "me" ? "Phone" : "PhoneMissed")} size={15}
-                        style={{ color: msg.from === "me" ? "#00ff88" : "#ff6600" }} />
-                      <span style={{ ...rF, fontWeight: 700, fontSize: "13px", color: msg.from === "me" ? "#00ff88" : "#ff6600" }}>{msg.text}</span>
-                      <span style={{ ...iF, fontSize: "10px", color: "#6b7fa3" }}>{msg.time}</span>
-                    </div>
-                  ) : (
-                    <div className="max-w-sm">
-                      <div className="px-4 py-2.5 rounded-2xl" style={{
-                        background: msg.from === "me"
-                          ? `linear-gradient(135deg, ${activeFriend.color}30, ${activeFriend.color}18)`
-                          : "rgba(255,255,255,0.06)",
-                        border: `1px solid ${msg.from === "me" ? activeFriend.color + "33" : "rgba(255,255,255,0.07)"}`,
-                        borderBottomRightRadius: msg.from === "me" ? "4px" : undefined,
-                        borderBottomLeftRadius: msg.from === "them" ? "4px" : undefined,
-                      }}>
-                        <div style={{ ...iF, fontSize: "14px", color: "#e2e8f0", lineHeight: 1.5 }}>{msg.text}</div>
-                      </div>
-                      <div style={{ ...iF, fontSize: "10px", color: "#4a5568", marginTop: "2px", textAlign: msg.from === "me" ? "right" : "left" }}>{msg.time}</div>
-                    </div>
-                  )}
-                  {msg.from === "me" && (
-                    <UserAvatar username={user.username} color={user.avatar_color} avatarImg={avatarImg} size={28} />
-                  )}
-                </div>
-              ))}
-              <div ref={msgsEndRef} />
-            </div>
-
-            {/* Input */}
-            <div className="px-5 pb-5 pt-2 shrink-0" style={{ background: "var(--dark-bg)" }}>
-              <div className="flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background: "rgba(255,255,255,0.06)", border: `1px solid ${activeFriend.color}22` }}>
-                <button className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-70" style={{ background: "rgba(255,255,255,0.06)" }}>
-                  <Icon name="Plus" size={14} style={{ color: "#6b7fa3" }} />
-                </button>
-                <input className="flex-1 bg-transparent outline-none text-sm"
-                  placeholder={`Написать ${activeFriend.name}...`}
-                  value={input} onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendMsg()}
-                  style={{ color: "#e2e8f0", ...iF }} />
-                <button className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-70" style={{ background: "rgba(255,255,255,0.06)" }}>
-                  <Icon name="Smile" size={14} style={{ color: "#6b7fa3" }} />
-                </button>
-                <button onClick={sendMsg} className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:scale-110 active:scale-95"
-                  style={{ background: activeFriend.color + "22", border: `1px solid ${activeFriend.color}44` }}>
-                  <Icon name="Send" size={14} style={{ color: activeFriend.color }} />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* NO CHAT SELECTED */}
-        {section === "chat" && !activeDM && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-5" style={{ background: "var(--dark-bg)" }}>
-            <div className="w-24 h-24 rounded-full flex items-center justify-center" style={{ background: "rgba(0,170,255,0.08)", border: "2px solid rgba(0,170,255,0.15)" }}>
-              <Icon name="MessageCircle" size={40} style={{ color: "#2a4060" }} />
-            </div>
-            <div style={{ ...rF, fontWeight: 700, fontSize: "20px", color: "#4a5568" }}>Нет открытых диалогов</div>
-            <div style={{ ...iF, fontSize: "14px", color: "#374151" }}>Выбери друга и начни общение</div>
-            <button onClick={() => setSection("friends")} className="flex items-center gap-2 px-5 py-2.5 rounded-xl transition-all hover:opacity-90"
-              style={{ background: "rgba(0,170,255,0.12)", color: "#00aaff", border: "1px solid rgba(0,170,255,0.25)", ...rF, fontWeight: 700, fontSize: "14px" }}>
-              <Icon name="Users" size={16} /> Открыть список друзей
-            </button>
-          </div>
-        )}
-
-        {/* PENDING */}
-        {section === "pending" && (
-          <div className="flex-1 overflow-y-auto p-6" style={{ background: "var(--dark-bg)" }}>
-            <h2 style={{ ...rF, fontWeight: 800, fontSize: "20px", color: "#e2e8f0", marginBottom: "4px" }}>Запросы в друзья</h2>
-            <p style={{ ...iF, fontSize: "13px", color: "#6b7fa3", marginBottom: "20px" }}>Входящие и исходящие запросы</p>
-
-            {/* Add friend */}
-            <div className="p-5 rounded-2xl mb-6" style={{ background: "var(--dark-card)", border: "1px solid rgba(0,255,136,0.12)" }}>
-              <div style={{ ...rF, fontWeight: 700, fontSize: "15px", color: "#e2e8f0", marginBottom: "4px" }}>Добавить друга</div>
-              <div style={{ ...iF, fontSize: "12px", color: "#6b7fa3", marginBottom: "12px" }}>Отправь запрос по имени пользователя</div>
-              <div className="flex gap-2">
-                <div className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-xl" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(0,255,136,0.2)" }}>
-                  <Icon name="AtSign" size={14} style={{ color: "#6b7fa3" }} />
-                  <input className="flex-1 bg-transparent outline-none text-sm" placeholder="Имя пользователя"
-                    value={addInput} onChange={e => setAddInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter" && addInput.trim()) { setAddStatus("sent"); setAddInput(""); setTimeout(() => setAddStatus("idle"), 3000); } }}
-                    style={{ color: "#e2e8f0", ...iF }} />
-                </div>
-                <button onClick={() => { if (addInput.trim()) { setAddStatus("sent"); setAddInput(""); setTimeout(() => setAddStatus("idle"), 3000); } }}
-                  className="px-4 py-2.5 rounded-xl transition-all hover:opacity-90"
-                  style={{ background: "rgba(0,255,136,0.15)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.3)", ...rF, fontWeight: 700 }}>
-                  Отправить
-                </button>
-              </div>
-              {addStatus === "sent" && (
-                <div className="flex items-center gap-2 mt-2 animate-fade-in" style={{ color: "#00ff88", ...iF, fontSize: "12px" }}>
-                  <Icon name="Check" size={13} /> Запрос отправлен!
-                </div>
-              )}
-            </div>
-
-            {/* Incoming */}
-            {pending.filter(r => r.direction === "incoming").length > 0 && (
-              <>
-                <div style={{ ...rF, fontWeight: 600, fontSize: "11px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "10px" }}>
-                  Входящие — {pending.filter(r => r.direction === "incoming").length}
-                </div>
-                <div className="space-y-2 mb-6">
-                  {pending.filter(r => r.direction === "incoming").map(req => (
-                    <div key={req.id} className="flex items-center gap-3 p-4 rounded-2xl" style={{ background: "var(--dark-card)", border: "1px solid rgba(0,255,136,0.12)" }}>
-                      <div className="w-12 h-12 rounded-full flex items-center justify-center shrink-0" style={{ background: req.color + "22", color: req.color, border: `2px solid ${req.color}33`, ...rF, fontWeight: 800, fontSize: "14px" }}>
-                        {req.name.slice(0, 2).toUpperCase()}
-                      </div>
-                      <div className="flex-1">
-                        <div style={{ ...rF, fontWeight: 800, fontSize: "16px", color: req.color }}>{req.name}</div>
-                        <div style={{ ...iF, fontSize: "12px", color: "#6b7fa3" }}>Хочет добавить тебя в друзья</div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => setPending(prev => prev.filter(r => r.id !== req.id))}
-                          className="flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all hover:opacity-80"
-                          style={{ background: "rgba(0,255,136,0.15)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.3)", ...rF, fontWeight: 700, fontSize: "12px" }}>
-                          <Icon name="Check" size={13} /> Принять
-                        </button>
-                        <button onClick={() => setPending(prev => prev.filter(r => r.id !== req.id))}
-                          className="w-9 h-9 rounded-xl flex items-center justify-center hover:opacity-80"
-                          style={{ background: "rgba(255,0,0,0.1)", border: "1px solid rgba(255,0,0,0.2)" }}>
-                          <Icon name="X" size={15} style={{ color: "#ff4444" }} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
               </>
             )}
 
-            {/* Outgoing */}
-            <div style={{ ...rF, fontWeight: 600, fontSize: "11px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "10px" }}>Исходящие</div>
-            <div className="space-y-2">
-              {pending.filter(r => r.direction === "outgoing").map(req => (
-                <div key={req.id} className="flex items-center gap-3 p-4 rounded-2xl" style={{ background: "var(--dark-card)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                  <div className="w-12 h-12 rounded-full flex items-center justify-center shrink-0" style={{ background: req.color + "22", color: req.color, border: `2px solid ${req.color}33`, ...rF, fontWeight: 800, fontSize: "14px" }}>
-                    {req.name.slice(0, 2).toUpperCase()}
+            {/* Вкладка Ожидание */}
+            {tab === "pending" && !searchQuery && (
+              <>
+                {/* Добавить друга */}
+                <div className="p-4 rounded-2xl mb-5" style={{ background: "rgba(0,255,136,0.05)", border: "1px solid rgba(0,255,136,0.15)" }}>
+                  <div style={{ ...rF, fontWeight: 700, fontSize: "14px", color: "#e2e8f0", marginBottom: "12px" }}>Добавить в друзья</div>
+                  <div className="flex gap-2">
+                    <input
+                      value={addInput}
+                      onChange={e => setAddInput(e.target.value)}
+                      onKeyDown={e => e.key === "Enter" && addFriend()}
+                      placeholder="Введи имя пользователя..."
+                      className="flex-1 px-3 py-2 rounded-xl outline-none"
+                      style={{ ...iF, fontSize: "14px", background: "rgba(255,255,255,0.05)", border: `1px solid ${addStatus === "error" ? "rgba(255,68,68,0.5)" : "rgba(0,255,136,0.2)"}`, color: "#e2e8f0" }}
+                    />
+                    <button onClick={addFriend} disabled={addStatus === "sending"}
+                      className="px-4 py-2 rounded-xl transition-all hover:opacity-90 disabled:opacity-50"
+                      style={{ ...rF, fontWeight: 700, fontSize: "14px", background: "rgba(0,255,136,0.2)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.4)", whiteSpace: "nowrap" }}>
+                      {addStatus === "sending" ? "..." : "Отправить заявку"}
+                    </button>
                   </div>
-                  <div className="flex-1">
-                    <div style={{ ...rF, fontWeight: 800, fontSize: "16px", color: req.color }}>{req.name}</div>
-                    <div style={{ ...iF, fontSize: "12px", color: "#6b7fa3" }}>Ожидает ответа...</div>
-                  </div>
-                  <button onClick={() => setPending(prev => prev.filter(r => r.id !== req.id))}
-                    className="w-9 h-9 rounded-xl flex items-center justify-center hover:opacity-80"
-                    style={{ background: "rgba(255,0,0,0.08)", border: "1px solid rgba(255,0,0,0.15)" }}>
-                    <Icon name="X" size={15} style={{ color: "#ff4444" }} />
-                  </button>
+                  {addStatus === "sent" && <div style={{ ...iF, fontSize: "12px", color: "#00ff88", marginTop: "6px" }}>✓ Заявка отправлена!</div>}
+                  {addStatus === "error" && <div style={{ ...iF, fontSize: "12px", color: "#ff4444", marginTop: "6px" }}>✕ {addError}</div>}
                 </div>
-              ))}
-              {pending.filter(r => r.direction === "outgoing").length === 0 && (
-                <div style={{ ...iF, fontSize: "13px", color: "#374151", padding: "12px" }}>Нет исходящих запросов</div>
-              )}
-            </div>
-          </div>
-        )}
 
-        {/* BLOCKED */}
-        {section === "blocked" && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ background: "var(--dark-bg)" }}>
-            <Icon name="UserX" size={44} style={{ color: "#2a3a5c" }} />
-            <div style={{ ...rF, fontWeight: 700, fontSize: "18px", color: "#4a5568" }}>Заблокированных нет</div>
-            <div style={{ ...iF, fontSize: "13px", color: "#374151" }}>Заблокированные не могут писать тебе</div>
+                {/* Входящие */}
+                {incomingPending.length > 0 && (
+                  <>
+                    <div style={{ ...rF, fontWeight: 600, fontSize: "11px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "8px" }}>
+                      Входящие — {incomingPending.length}
+                    </div>
+                    {incomingPending.map(f => (
+                      <div key={f.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1 hover:bg-white hover:bg-opacity-5 transition-colors">
+                        <div className="w-10 h-10 rounded-full flex items-center justify-center"
+                          style={{ background: f.avatar_color + "22", color: f.avatar_color, border: `1px solid ${f.avatar_color}33`, ...rF, fontWeight: 700, fontSize: "13px" }}>
+                          {f.username.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="flex-1">
+                          <div style={{ ...rF, fontWeight: 700, fontSize: "15px", color: f.avatar_color }}>{f.username}</div>
+                          <div style={{ ...iF, fontSize: "12px", color: "#6b7fa3" }}>Входящая заявка</div>
+                        </div>
+                        <button onClick={() => respondFriend(f.id, true)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80" style={{ background: "rgba(0,255,136,0.15)", color: "#00ff88" }} title="Принять">
+                          <Icon name="Check" size={15} />
+                        </button>
+                        <button onClick={() => respondFriend(f.id, false)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80" style={{ background: "rgba(255,68,68,0.12)", color: "#ff4444" }} title="Отклонить">
+                          <Icon name="X" size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {/* Исходящие */}
+                {outgoingPending.length > 0 && (
+                  <>
+                    <div style={{ ...rF, fontWeight: 600, fontSize: "11px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "8px", marginTop: "16px" }}>
+                      Исходящие — {outgoingPending.length}
+                    </div>
+                    {outgoingPending.map(f => (
+                      <div key={f.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1 hover:bg-white hover:bg-opacity-5 transition-colors">
+                        <div className="w-10 h-10 rounded-full flex items-center justify-center"
+                          style={{ background: f.avatar_color + "22", color: f.avatar_color, border: `1px solid ${f.avatar_color}33`, ...rF, fontWeight: 700, fontSize: "13px" }}>
+                          {f.username.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="flex-1">
+                          <div style={{ ...rF, fontWeight: 700, fontSize: "15px", color: f.avatar_color }}>{f.username}</div>
+                          <div style={{ ...iF, fontSize: "12px", color: "#6b7fa3" }}>Ожидание ответа...</div>
+                        </div>
+                        <button onClick={() => removeFriend(f.id)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80" style={{ background: "rgba(255,68,68,0.12)", color: "#ff4444" }} title="Отменить">
+                          <Icon name="X" size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {incomingPending.length === 0 && outgoingPending.length === 0 && (
+                  <div className="text-center py-12" style={{ ...iF, fontSize: "14px", color: "#4a5568" }}>
+                    Нет ожидающих заявок
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Заблокированные */}
+            {tab === "blocked" && !searchQuery && (
+              <div className="text-center py-12" style={{ ...iF, fontSize: "14px", color: "#4a5568" }}>
+                Нет заблокированных пользователей
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
