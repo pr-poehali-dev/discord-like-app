@@ -11,6 +11,7 @@ import ProfileModal from "@/components/ProfileModal";
 import UserAvatar from "@/components/UserAvatar";
 import AudioDevicePicker from "@/components/AudioDevicePicker";
 import { useWebRTC } from "@/hooks/useWebRTC";
+import { useMicLevel } from "@/hooks/useMicLevel";
 
 const MESSAGES_URL = "https://functions.poehali.dev/bd122cd3-cf73-44cb-b4a3-4b1eb3cfdaac";
 const API_URL = "https://functions.poehali.dev/34ebed0a-100a-450c-8c07-780342df2a96";
@@ -382,6 +383,9 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
     isInitiator: false,
     withVideo: hasVideo,
   });
+
+  // Уровень громкости микрофона (0..1)
+  const micLevel = useMicLevel(myStream, micMuted);
 
   const server = servers.find(s => s.id === activeServer) || servers[0];
   const sData = SERVER_DATA[activeServer] || SERVER_DATA[1];
@@ -1191,6 +1195,24 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
             <div style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "11px", color: "#6b7fa3", marginBottom: "6px" }}>
               {sData.channels.voice.find(c => c.id === activeVoiceChannel)?.name}
             </div>
+            {/* Индикатор уровня микрофона */}
+            <div className="flex items-center gap-1.5 mb-2">
+              <Icon name={micMuted ? "MicOff" : "Mic"} size={10} style={{ color: micMuted ? "#ff4444" : "#00ff88", flexShrink: 0 }} />
+              <div className="flex gap-px flex-1">
+                {Array.from({ length: 16 }).map((_, i) => {
+                  const threshold = (i + 1) / 16;
+                  const active = !micMuted && micLevel >= threshold;
+                  const color = i < 10 ? "#00ff88" : i < 13 ? "#ffcc00" : "#ff4444";
+                  return (
+                    <div key={i} style={{
+                      flex: 1, height: "6px", borderRadius: "2px",
+                      background: active ? color : "rgba(255,255,255,0.07)",
+                      transition: "background 80ms",
+                    }} />
+                  );
+                })}
+              </div>
+            </div>
             <div className="flex gap-1.5">
               <button onClick={() => setMicMuted(v => !v)} className="w-7 h-7 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity"
                 style={{ background: micMuted ? "rgba(255,68,68,0.2)" : "rgba(0,255,136,0.12)", color: micMuted ? "#ff4444" : "#00ff88" }} title={micMuted ? "Включить микрофон" : "Выключить микрофон"}>
@@ -1281,9 +1303,9 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
             </div>
             <div className="flex gap-1">
               <button onClick={() => setMicMuted(v => !v)} title={micMuted ? "Включить микрофон" : "Выключить микрофон"}
-                className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 transition-opacity"
-                style={{ background: micMuted ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.05)" }}>
-                <Icon name={micMuted ? "MicOff" : "Mic"} size={12} style={{ color: micMuted ? "#ff4444" : "#6b7fa3" }} />
+                className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 transition-opacity relative"
+                style={{ background: micMuted ? "rgba(255,68,68,0.2)" : micLevel > 0.05 ? `rgba(0,255,136,${0.08 + micLevel * 0.22})` : "rgba(255,255,255,0.05)", boxShadow: !micMuted && micLevel > 0.1 ? `0 0 ${4 + micLevel * 8}px rgba(0,255,136,${micLevel * 0.6})` : "none", transition: "background 80ms, box-shadow 80ms" }}>
+                <Icon name={micMuted ? "MicOff" : "Mic"} size={12} style={{ color: micMuted ? "#ff4444" : micLevel > 0.05 ? "#00ff88" : "#6b7fa3" }} />
               </button>
               <button onClick={() => setHeadphonesDeaf(v => !v)} title={headphonesDeaf ? "Включить звук" : "Заглушить наушники"}
                 className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 transition-opacity"
