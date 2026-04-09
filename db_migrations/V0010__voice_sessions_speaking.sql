@@ -1,0 +1,2 @@
+ALTER TABLE t_p25996638_discord_like_app.voice_sessions
+  ADD COLUMN IF NOT EXISTS speaking BOOLEAN NOT NULL DEFAULT FALSE;

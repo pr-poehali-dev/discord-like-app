@@ -55,6 +55,7 @@ interface VoiceParticipant {
   deafened: boolean;
   streaming: boolean;
   video: boolean;
+  speaking: boolean;
 }
 
 interface Msg {
@@ -365,6 +366,7 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   const micMutedRef = useRef(false);
   const headphonesDeafRef = useRef(false);
   const isStreamingRef = useRef(false);
+  const isSpeakingRef = useRef(false);
   const activeVoiceChannelRef = useRef<number | null>(null);
   const activeServerRef = useRef<number>(1);
 
@@ -372,6 +374,7 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   micMutedRef.current = micMuted;
   headphonesDeafRef.current = headphonesDeaf;
   isStreamingRef.current = isStreaming;
+  isSpeakingRef.current = !micMuted && micLevel > 0.06;
   activeVoiceChannelRef.current = activeVoiceChannel;
   activeServerRef.current = activeServer;
 
@@ -864,6 +867,7 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
           action: "voice_ping", server_id: sid, channel_id: cid, user_id: user.id,
           muted: micMutedRef.current, deafened: headphonesDeafRef.current,
           streaming: isStreamingRef.current, video: false,
+          speaking: isSpeakingRef.current,
         }),
       }).catch(() => {});
       const res = await fetch(`${API_URL}?action=voice_list&server_id=${sid}`).catch(() => null);
@@ -1154,12 +1158,41 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
                 {/* Участники в канале */}
                 {voiceParticipants[String(ch.id)]?.map(p => (
                   <div key={p.user_id} className="flex items-center gap-2 px-4 py-0.5 mb-0.5">
-                    <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: p.avatar_color + "22", color: p.avatar_color, fontSize: "8px", fontFamily: "Rajdhani, sans-serif", fontWeight: 700 }}>
-                      {p.username.slice(0,2).toUpperCase()}
+                    {/* Аватар с ободком говорящего */}
+                    <div className="relative shrink-0">
+                      <div className="w-5 h-5 rounded-full flex items-center justify-center"
+                        style={{
+                          background: p.avatar_color + "22",
+                          color: p.avatar_color,
+                          fontSize: "8px",
+                          fontFamily: "Rajdhani, sans-serif",
+                          fontWeight: 700,
+                          outline: p.speaking && !p.muted ? `2px solid ${p.avatar_color}` : "2px solid transparent",
+                          outlineOffset: "1px",
+                          transition: "outline-color 150ms",
+                          boxShadow: p.speaking && !p.muted ? `0 0 6px ${p.avatar_color}88` : "none",
+                        }}>
+                        {p.username.slice(0, 2).toUpperCase()}
+                      </div>
+                      {/* Мут-значок поверх аватара */}
+                      {p.muted && (
+                        <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full flex items-center justify-center"
+                          style={{ background: "#1a2030", border: "1px solid #ff4444" }}>
+                          <div className="w-1 h-1 rounded-full" style={{ background: "#ff4444" }} />
+                        </div>
+                      )}
                     </div>
-                    <span style={{ fontSize: "11px", color: "#6b7fa3", fontFamily: "IBM Plex Sans, sans-serif", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.username}</span>
-                    {p.muted && <Icon name="MicOff" size={10} style={{ color: "#ff4444" }} />}
-                    {p.streaming && <Icon name="MonitorPlay" size={10} style={{ color: "#00ff88" }} />}
+                    <span style={{
+                      fontSize: "11px",
+                      color: p.speaking && !p.muted ? p.avatar_color : "#6b7fa3",
+                      fontFamily: "IBM Plex Sans, sans-serif",
+                      flex: 1,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                      fontWeight: p.speaking && !p.muted ? 600 : 400,
+                      transition: "color 150ms",
+                    }}>{p.username}</span>
+                    {p.deafened && <Icon name="VolumeX" size={10} style={{ color: "#ff4444" }} />}
+                    {p.streaming && <Icon name="MonitorPlay" size={10} style={{ color: "#ff00aa" }} />}
                   </div>
                 ))}
               </div>

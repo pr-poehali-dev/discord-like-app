@@ -297,10 +297,11 @@ def handler(event: dict, context) -> dict:
             deafened = body.get("deafened", False)
             streaming = body.get("streaming", False)
             video = body.get("video", False)
+            speaking = body.get("speaking", False)
             cur.execute(
-                f"UPDATE {SCHEMA}.voice_sessions SET last_ping=NOW(), muted=%s, deafened=%s, streaming=%s, video=%s "
+                f"UPDATE {SCHEMA}.voice_sessions SET last_ping=NOW(), muted=%s, deafened=%s, streaming=%s, video=%s, speaking=%s "
                 f"WHERE server_id=%s AND channel_id=%s AND user_id=%s",
-                (muted, deafened, streaming, video, server_id, channel_id, user_id)
+                (muted, deafened, streaming, video, speaking, server_id, channel_id, user_id)
             )
             conn.commit()
             return {"statusCode": 200, "headers": cors(), "body": json.dumps({"ok": True})}
@@ -308,7 +309,7 @@ def handler(event: dict, context) -> dict:
         if action == "voice_list":
             server_id = int(params.get("server_id") or body.get("server_id"))
             cur.execute(
-                f"SELECT channel_id, user_id, username, avatar_color, muted, deafened, streaming, video "
+                f"SELECT channel_id, user_id, username, avatar_color, muted, deafened, streaming, video, speaking "
                 f"FROM {SCHEMA}.voice_sessions "
                 f"WHERE server_id=%s AND last_ping > NOW() - INTERVAL '15 seconds' "
                 f"ORDER BY channel_id, joined_at ASC",
@@ -323,6 +324,7 @@ def handler(event: dict, context) -> dict:
                 by_channel[cid].append({
                     "user_id": r[1], "username": r[2], "avatar_color": r[3],
                     "muted": r[4], "deafened": r[5], "streaming": r[6], "video": r[7],
+                    "speaking": r[8],
                 })
             return {"statusCode": 200, "headers": cors(), "body": json.dumps({"channels": by_channel})}
 
