@@ -946,7 +946,10 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
                       color={msg.color}
                       avatarImg={msg.user === user.username ? avatarImg : undefined}
                       size={36}
-                      onClick={() => { const m = MEMBERS.find(mb => mb.name === msg.user); if (m) setProfileMember(m); }}
+                      onClick={() => {
+                        const m = MEMBERS.find(mb => mb.name === msg.user);
+                        setProfileMember(m || { id: msg.user_id || 0, name: msg.user, color: msg.color, role: msg.role || "", roleColor: msg.roleColor || msg.color, status: "online", avatar: msg.avatar, game: "" });
+                      }}
                       className="hover:scale-110 transition-all"
                     />
                     <div className="flex-1 min-w-0">
