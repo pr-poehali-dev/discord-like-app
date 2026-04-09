@@ -1,0 +1,37 @@
+{
+  "tests": [
+    {
+      "name": "GET servers",
+      "method": "GET",
+      "path": "/?action=get_servers&user_id=1",
+      "expectedStatus": 200,
+      "expectedBody": {"servers": []},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "POST create server",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "create_server", "name": "Test Guild", "owner_id": 1, "color": "#00ff88"},
+      "expectedStatus": 200,
+      "expectedBody": {"name": "Test Guild"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET reactions empty",
+      "method": "GET",
+      "path": "/?action=get_reactions",
+      "expectedStatus": 200,
+      "expectedBody": {"reactions": {}},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET search users",
+      "method": "GET",
+      "path": "/?action=search&q=test&type=users",
+      "expectedStatus": 200,
+      "expectedBody": {"users": []},
+      "bodyMatcher": "partial"
+    }
+  ]
+}

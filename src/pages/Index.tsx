@@ -11,6 +11,8 @@ import ProfileModal from "@/components/ProfileModal";
 import UserAvatar from "@/components/UserAvatar";
 
 const MESSAGES_URL = "https://functions.poehali.dev/bd122cd3-cf73-44cb-b4a3-4b1eb3cfdaac";
+const API_URL = "https://functions.poehali.dev/34ebed0a-100a-450c-8c07-780342df2a96";
+const ONLINE_URL = "https://functions.poehali.dev/66112eb3-a471-46d1-b43a-c46fa78fbe18";
 
 interface User {
   id: number;
@@ -41,7 +43,23 @@ interface ForumChannel { id: number; name: string; posts: number; }
 interface ServerChannels { text: TextChannel[]; voice: VoiceChannel[]; forum: ForumChannel[]; }
 interface ServerMember { id: number; name: string; role: string; roleColor: string; status: string; avatar: string; game: string; color: string; }
 interface ServerRole { id: number; name: string; color: string; members: number; perms: string[]; }
-interface Msg { id: number; user: string; avatar: string; color: string; role: string; roleColor: string; time: string; text: string; reactions: { emoji: string; count: number }[]; }
+interface Msg {
+  id: number;
+  user: string;
+  user_id?: number;
+  avatar: string;
+  color: string;
+  role: string;
+  roleColor: string;
+  time: string;
+  text: string;
+  reactions: { emoji: string; count: number; user_ids?: number[] }[];
+  file_url?: string;
+  file_name?: string;
+  file_type?: string;
+  edited?: boolean;
+  is_removed?: boolean;
+}
 
 const SERVER_DATA: Record<number, { channels: ServerChannels; members: ServerMember[]; roles: ServerRole[]; messages: Record<number, Msg[]> }> = {
   1: {
@@ -271,6 +289,21 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
   const [dmMode, setDmMode] = useState(false);
   const [profileMember, setProfileMember] = useState<ServerMember | null>(null);
   const [servers, setServers] = useState(INITIAL_SERVERS);
+  const [channels, setChannels] = useState<Record<number, TextChannel[]>>({});
+  const [onlineMembers, setOnlineMembers] = useState<{ id: number; username: string; avatar_color: string; status: string }[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<{ id: number; username?: string; text?: string; time?: string; date?: string; channel_id?: number; avatar_color?: string }[]>([]);
+  const [searchType, setSearchType] = useState<"messages" | "users">("messages");
+  const [editingMsgId, setEditingMsgId] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState("");
+  const [menuMsgId, setMenuMsgId] = useState<number | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const onlinePollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const notifAudioRef = useRef<HTMLAudioElement | null>(null);
+  const prevMsgCountRef = useRef<number>(0);
 
   const server = servers.find(s => s.id === activeServer) || servers[0];
   const sData = SERVER_DATA[activeServer] || SERVER_DATA[1];
@@ -291,8 +324,13 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
       const res = await fetch(`${MESSAGES_URL}?server_id=${serverId}&channel_id=${channelId}&after_id=${afterId}`);
       const data = await res.json();
       if (!data.messages?.length) return;
-      const newMsgs: Msg[] = data.messages.map((m: { id: number; username: string; avatar_color: string; text: string; time: string }) => ({
+      const newMsgs: Msg[] = data.messages.map((m: {
+        id: number; user_id?: number; username: string; avatar_color: string;
+        text: string; time: string; file_url?: string; file_name?: string;
+        file_type?: string; edited?: boolean; is_removed?: boolean;
+      }) => ({
         id: m.id,
+        user_id: m.user_id,
         user: m.username,
         avatar: m.username.slice(0, 2).toUpperCase(),
         color: m.avatar_color,
@@ -301,8 +339,18 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
         time: m.time,
         text: m.text,
         reactions: [],
+        file_url: m.file_url,
+        file_name: m.file_name,
+        file_type: m.file_type,
+        edited: m.edited,
+        is_removed: m.is_removed,
       }));
       lastMsgIdRef.current[key] = data.messages[data.messages.length - 1].id;
+      // звук уведомления при новом сообщении
+      if (prevMsgCountRef.current > 0 && notifAudioRef.current?.paused !== false) {
+        try { notifAudioRef.current?.play().catch(() => {}); } catch { /* silent */ }
+      }
+      prevMsgCountRef.current = (serverMessages[serverId]?.[channelId]?.length || 0) + newMsgs.length;
       setServerMessages(prev => ({
         ...prev,
         [serverId]: {
@@ -329,10 +377,38 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
     return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, [activeServer, activeChannel]);
 
+  // Загрузка серверов и каналов при старте
+  useEffect(() => {
+    fetchServers();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    fetchChannels(activeServer);
+    fetchOnlineMembers();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeServer]);
+
+  // Heartbeat каждые 20 секунд
+  useEffect(() => {
+    sendHeartbeat();
+    heartbeatRef.current = setInterval(sendHeartbeat, 20000);
+    return () => { if (heartbeatRef.current) clearInterval(heartbeatRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myStatus]);
+
+  // Онлайн участники каждые 15 секунд
+  useEffect(() => {
+    onlinePollingRef.current = setInterval(fetchOnlineMembers, 15000);
+    return () => { if (onlinePollingRef.current) clearInterval(onlinePollingRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeServer]);
+
   const switchServer = (id: number) => {
     setActiveServer(id);
-    const firstCh = (SERVER_DATA[id] || SERVER_DATA[1]).channels.text[0];
-    setActiveChannel(firstCh?.id || 101);
+    const dbChs = channels[id];
+    const fallbackCh = (SERVER_DATA[id] || SERVER_DATA[1]).channels.text[0];
+    setActiveChannel(dbChs?.[0]?.id || fallbackCh?.id || 101);
     setActiveTab("chat");
   };
 
@@ -357,18 +433,169 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
     } catch { /* silent */ }
   };
 
+  // Heartbeat онлайн
+  const sendHeartbeat = async () => {
+    try {
+      await fetch(ONLINE_URL, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: user.id, status: myStatus }),
+      });
+    } catch { /* silent */ }
+  };
+
+  // Загрузка онлайн-участников
+  const fetchOnlineMembers = async () => {
+    try {
+      const res = await fetch(`${ONLINE_URL}?server_id=${activeServer}`);
+      const data = await res.json();
+      if (data.online) setOnlineMembers(data.online);
+    } catch { /* silent */ }
+  };
+
+  // Загрузка каналов с сервера
+  const fetchChannels = async (serverId: number) => {
+    try {
+      const res = await fetch(`${API_URL}?action=get_channels&server_id=${serverId}`);
+      const data = await res.json();
+      if (data.channels?.length) {
+        setChannels(prev => ({ ...prev, [serverId]: data.channels.filter((c: { type: string }) => c.type === "text") }));
+      }
+    } catch { /* silent */ }
+  };
+
+  // Загрузка серверов из БД
+  const fetchServers = async () => {
+    try {
+      const res = await fetch(`${API_URL}?action=get_servers&user_id=${user.id}`);
+      const data = await res.json();
+      if (data.servers?.length) {
+        setServers(data.servers.map((s: { id: number; name: string; abbr: string; color: string; members: number }) => ({ ...s, unread: 0 })));
+      }
+    } catch { /* silent */ }
+  };
+
+  // Поиск
+  const doSearch = async () => {
+    if (searchQuery.trim().length < 2) return;
+    try {
+      const res = await fetch(`${API_URL}?action=search&q=${encodeURIComponent(searchQuery)}&type=${searchType}&server_id=${activeServer}`);
+      const data = await res.json();
+      setSearchResults(searchType === "users" ? (data.users || []) : (data.messages || []));
+    } catch { /* silent */ }
+  };
+
+  // Toggle реакция
+  const toggleReaction = async (msgId: number, emoji: string) => {
+    try {
+      await fetch(API_URL, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "toggle_reaction", message_id: msgId, user_id: user.id, emoji }),
+      });
+      setServerMessages(prev => {
+        const msgs = [...(prev[activeServer]?.[activeChannel] || [])];
+        const idx = msgs.findIndex(m => m.id === msgId);
+        if (idx === -1) return prev;
+        const msg = { ...msgs[idx] };
+        const rIdx = msg.reactions.findIndex(r => r.emoji === emoji);
+        if (rIdx >= 0) {
+          const alreadyReacted = msg.reactions[rIdx].user_ids?.includes(user.id);
+          msg.reactions = msg.reactions.map((re, i) => i === rIdx
+            ? { ...re, count: alreadyReacted ? re.count - 1 : re.count + 1, user_ids: alreadyReacted ? re.user_ids?.filter(uid => uid !== user.id) : [...(re.user_ids || []), user.id] }
+            : re
+          ).filter(re => re.count > 0);
+        } else {
+          msg.reactions = [...msg.reactions, { emoji, count: 1, user_ids: [user.id] }];
+        }
+        msgs[idx] = msg;
+        return { ...prev, [activeServer]: { ...prev[activeServer], [activeChannel]: msgs } };
+      });
+    } catch { /* silent */ }
+  };
+
+  // Редактирование сообщения
+  const editMessage = async (msgId: number, newText: string) => {
+    try {
+      await fetch(MESSAGES_URL, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: msgId, user_id: user.id, action: "edit", text: newText }),
+      });
+      setServerMessages(prev => {
+        const msgs = (prev[activeServer]?.[activeChannel] || []).map(m =>
+          m.id === msgId ? { ...m, text: newText, edited: true } : m
+        );
+        return { ...prev, [activeServer]: { ...prev[activeServer], [activeChannel]: msgs } };
+      });
+      setEditingMsgId(null);
+      setEditingText("");
+    } catch { /* silent */ }
+  };
+
+  // Удаление сообщения
+  const removeMessage = async (msgId: number) => {
+    try {
+      await fetch(MESSAGES_URL, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: msgId, user_id: user.id, action: "remove" }),
+      });
+      setServerMessages(prev => {
+        const msgs = (prev[activeServer]?.[activeChannel] || []).map(m =>
+          m.id === msgId ? { ...m, text: "Сообщение удалено", is_removed: true } : m
+        );
+        return { ...prev, [activeServer]: { ...prev[activeServer], [activeChannel]: msgs } };
+      });
+      setMenuMsgId(null);
+    } catch { /* silent */ }
+  };
+
+  // Загрузка файла
+  const handleFileUpload = async (file: File) => {
+    setUploadingFile(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64 = (e.target?.result as string)?.split(",")[1];
+        if (!base64) { setUploadingFile(false); return; }
+        await fetch(MESSAGES_URL, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            server_id: activeServer, channel_id: activeChannel,
+            user_id: user.id, username: user.username, avatar_color: user.avatar_color,
+            text: "", file_data: base64, file_name: file.name, file_type: file.type,
+          }),
+        });
+        fetchMessages(activeServer, activeChannel);
+        setUploadingFile(false);
+      };
+      reader.readAsDataURL(file);
+    } catch { setUploadingFile(false); }
+  };
+
   return (
+    <>
+    <audio ref={notifAudioRef} src="https://cdn.poehali.dev/projects/p25996638/bucket/notif.mp3" preload="auto" />
+    <input type="file" ref={fileInputRef} className="hidden" accept="image/*,video/*,.pdf,.txt,.zip" onChange={e => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = ""; }} />
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--dark-bg)", fontFamily: "IBM Plex Sans, sans-serif" }}>
       {showServerSettings && <ServerSettings server={server} onClose={() => setShowServerSettings(false)} />}
       {showUserSettings && <UserSettings user={user} avatarImg={avatarImg} onAvatarChange={onAvatarChange} onClose={() => setShowUserSettings(false)} onLogout={onLogout} />}
-      {showCreateServer && <CreateServerModal onClose={() => setShowCreateServer(false)} onCreate={s => { const newId = servers.length + 1; setServers(prev => [...prev, { id: newId, ...s, members: 1, unread: 0 }]); setActiveServer(newId); }} />}
+      {showCreateServer && <CreateServerModal onClose={() => setShowCreateServer(false)} onCreate={async (s) => {
+        const res = await fetch(API_URL, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "create_server", name: s.name, owner_id: user.id, color: s.color, abbr: s.abbr }),
+        });
+        const data = await res.json();
+        if (data.id) {
+          setServers(prev => [...prev, { ...data, unread: 0 }]);
+          setActiveServer(data.id);
+          fetchChannels(data.id);
+        }
+      }} />}
       {showChannelSettings && <ChannelSettings channel={sData.channels.text.find(c => c.id === activeChannel) || sData.channels.text[0]} onClose={() => setShowChannelSettings(false)} />}
       {showStreamCapture && <StreamCapture onClose={() => setShowStreamCapture(false)} onStart={() => setStreamActive(true)} />}
       {profileMember && (
         <ProfileModal
           member={{ id: profileMember.id, name: profileMember.name, color: profileMember.color, role: profileMember.role, roleColor: profileMember.roleColor, status: profileMember.status, avatar: profileMember.avatar, game: profileMember.game, mutual: 3 }}
           onClose={() => setProfileMember(null)}
-          onMessage={() => { setShowDMPanel(true); setProfileMember(null); }}
+          onMessage={() => { setDmMode(true); setProfileMember(null); }}
         />
       )}
 
@@ -642,8 +869,8 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
                 <Icon name="Settings" size={15} style={{ color: "#6b7fa3" }} />
               </button>
             )}
-            <button className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(255,255,255,0.05)" }}>
-              <Icon name="Search" size={15} style={{ color: "#6b7fa3" }} />
+            <button onClick={() => setSearchOpen(v => !v)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: searchOpen ? "rgba(0,255,136,0.15)" : "rgba(255,255,255,0.05)" }}>
+              <Icon name="Search" size={15} style={{ color: searchOpen ? "#00ff88" : "#6b7fa3" }} />
             </button>
             <button className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(255,255,255,0.05)" }}>
               <Icon name="Bell" size={15} style={{ color: "#6b7fa3" }} />
@@ -651,18 +878,69 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
           </div>
         </div>
 
+        {/* Search panel */}
+        {searchOpen && (
+          <div className="px-4 py-2 flex gap-2 shrink-0" style={{ background: "#0a1628", borderBottom: "1px solid rgba(0,255,136,0.1)" }}>
+            <select value={searchType} onChange={e => setSearchType(e.target.value as "messages" | "users")}
+              style={{ background: "#0d1424", color: "#e2e8f0", border: "1px solid rgba(0,255,136,0.2)", borderRadius: "6px", padding: "4px 8px", fontSize: "12px" }}>
+              <option value="messages">Сообщения</option>
+              <option value="users">Пользователи</option>
+            </select>
+            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && doSearch()}
+              placeholder="Поиск..." className="flex-1 bg-transparent outline-none text-sm"
+              style={{ color: "#e2e8f0", border: "1px solid rgba(0,255,136,0.2)", borderRadius: "6px", padding: "4px 12px" }} />
+            <button onClick={doSearch} style={{ background: "rgba(0,255,136,0.15)", color: "#00ff88", border: "none", borderRadius: "6px", padding: "4px 12px", cursor: "pointer", fontSize: "12px" }}>Найти</button>
+            <button onClick={() => { setSearchOpen(false); setSearchResults([]); }} style={{ color: "#6b7fa3", cursor: "pointer", background: "none", border: "none" }}>✕</button>
+          </div>
+        )}
+        {searchResults.length > 0 && searchOpen && (
+          <div className="overflow-y-auto max-h-48 px-4 py-2 shrink-0" style={{ background: "#060a11", borderBottom: "1px solid rgba(0,255,136,0.1)" }}>
+            {searchResults.map((r) => (
+              <div key={r.id} className="py-1.5 px-2 rounded cursor-pointer hover:opacity-80" style={{ fontSize: "13px", color: "#e2e8f0", borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
+                {r.username && <span style={{ color: r.avatar_color || "#00ff88" }}>{r.username}</span>}
+                {r.text && <><span style={{ color: "#6b7fa3", marginRight: 6 }}>{r.time} {r.date}</span><span>{r.text.slice(0, 80)}</span></>}
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Content area */}
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex overflow-hidden" onClick={() => { if (menuMsgId !== null) setMenuMsgId(null); }}>
 
           {/* Chat */}
           {activeTab === "chat" && (
             <div className="flex-1 flex flex-col min-w-0">
               <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
                 {messages.map((msg, i) => (
-                  <div key={msg.id} className="flex gap-3 px-3 py-2 rounded-xl group transition-colors" style={{ background: "transparent" }}
+                  <div key={msg.id} className="flex gap-3 px-3 py-2 rounded-xl group transition-colors relative" style={{ background: "transparent" }}
                     onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.02)")}
                     onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                   >
+                    {/* Context menu */}
+                    {menuMsgId === msg.id && (
+                      <div className="absolute right-2 top-2 z-50 rounded-xl overflow-hidden shadow-2xl" style={{ background: "#0d1424", border: "1px solid rgba(0,255,136,0.2)", minWidth: "140px" }}>
+                        {msg.user_id === user.id && !msg.is_removed && (
+                          <button className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white hover:bg-opacity-5 transition-colors"
+                            onClick={e => { e.stopPropagation(); setEditingMsgId(msg.id); setEditingText(msg.text); setMenuMsgId(null); }}
+                            style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", color: "#00ff88" }}>
+                            <Icon name="Pencil" size={12} /> Редактировать
+                          </button>
+                        )}
+                        {msg.user_id === user.id && !msg.is_removed && (
+                          <button className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white hover:bg-opacity-5 transition-colors"
+                            onClick={e => { e.stopPropagation(); removeMessage(msg.id); }}
+                            style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", color: "#ff4444" }}>
+                            <Icon name="Trash2" size={12} /> Удалить
+                          </button>
+                        )}
+                        <button className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white hover:bg-opacity-5 transition-colors"
+                          onClick={e => { e.stopPropagation(); setMenuMsgId(null); }}
+                          style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "13px", color: "#6b7fa3" }}>
+                          <Icon name="X" size={12} /> Закрыть
+                        </button>
+                      </div>
+                    )}
                     <UserAvatar
                       username={msg.user}
                       color={msg.color}
@@ -674,19 +952,65 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "14px", color: msg.color }}>{msg.user}</span>
-                        <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "10px", background: msg.roleColor + "22", color: msg.roleColor, border: `1px solid ${msg.roleColor}44`, padding: "1px 6px", borderRadius: "3px", textTransform: "uppercase", letterSpacing: "0.5px" }}>{msg.role}</span>
+                        {msg.role && <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "10px", background: msg.roleColor + "22", color: msg.roleColor, border: `1px solid ${msg.roleColor}44`, padding: "1px 6px", borderRadius: "3px", textTransform: "uppercase", letterSpacing: "0.5px" }}>{msg.role}</span>}
                         <span style={{ fontSize: "11px", color: "#4a5568" }}>{msg.time}</span>
+                        {msg.edited && !msg.is_removed && <span style={{ fontSize: "10px", color: "#6b7fa3" }}>(изм.)</span>}
+                        {/* три точки при hover */}
+                        <button className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity w-6 h-6 rounded flex items-center justify-center"
+                          style={{ background: "rgba(255,255,255,0.06)" }}
+                          onClick={e => { e.stopPropagation(); setMenuMsgId(menuMsgId === msg.id ? null : msg.id); }}>
+                          <Icon name="MoreHorizontal" size={12} style={{ color: "#6b7fa3" }} />
+                        </button>
                       </div>
-                      <p className="text-sm leading-relaxed" style={{ color: "#c8d6e8", fontFamily: "IBM Plex Sans, sans-serif" }}>{msg.text}</p>
+                      {/* Текст или режим редактирования */}
+                      {editingMsgId === msg.id ? (
+                        <div className="flex gap-2 mt-1">
+                          <input className="flex-1 bg-transparent outline-none text-sm px-2 py-1 rounded"
+                            style={{ color: "#e2e8f0", border: "1px solid rgba(0,255,136,0.3)", fontFamily: "IBM Plex Sans, sans-serif" }}
+                            value={editingText} onChange={e => setEditingText(e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter") editMessage(msg.id, editingText); if (e.key === "Escape") { setEditingMsgId(null); setEditingText(""); } }}
+                            autoFocus />
+                          <button onClick={() => editMessage(msg.id, editingText)} style={{ background: "rgba(0,255,136,0.15)", color: "#00ff88", border: "none", borderRadius: "6px", padding: "2px 10px", cursor: "pointer", fontSize: "12px", fontFamily: "Rajdhani, sans-serif", fontWeight: 600 }}>Сохранить</button>
+                          <button onClick={() => { setEditingMsgId(null); setEditingText(""); }} style={{ color: "#6b7fa3", background: "none", border: "none", cursor: "pointer", fontSize: "12px" }}>Отмена</button>
+                        </div>
+                      ) : (
+                        <p className="text-sm leading-relaxed" style={{ color: msg.is_removed ? "#4a5568" : "#c8d6e8", fontFamily: "IBM Plex Sans, sans-serif", fontStyle: msg.is_removed ? "italic" : "normal" }}>{msg.text}</p>
+                      )}
+                      {/* Прикреплённый файл/картинка */}
+                      {msg.file_url && !msg.is_removed && (
+                        <div className="mt-2">
+                          {msg.file_type?.startsWith("image/") ? (
+                            <img src={msg.file_url} alt={msg.file_name || "file"} className="rounded-xl max-h-60 max-w-xs object-cover cursor-pointer hover:opacity-90 transition-opacity" onClick={() => window.open(msg.file_url, "_blank")} />
+                          ) : msg.file_type?.startsWith("video/") ? (
+                            <video src={msg.file_url} controls className="rounded-xl max-h-48 max-w-xs" />
+                          ) : (
+                            <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-3 py-2 rounded-lg hover:opacity-80 transition-opacity" style={{ background: "rgba(0,255,136,0.08)", border: "1px solid rgba(0,255,136,0.15)", color: "#00ff88", textDecoration: "none", display: "inline-flex", maxWidth: "260px" }}>
+                              <Icon name="Paperclip" size={14} />
+                              <span style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "13px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{msg.file_name || "Файл"}</span>
+                            </a>
+                          )}
+                        </div>
+                      )}
+                      {/* Реакции */}
                       {msg.reactions.length > 0 && (
-                        <div className="flex gap-1.5 mt-1.5">
+                        <div className="flex gap-1.5 mt-1.5 flex-wrap">
                           {msg.reactions.map((r, ri) => (
-                            <button key={ri} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-all hover:opacity-80" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#8899bb" }}>
+                            <button key={ri} onClick={() => toggleReaction(msg.id, r.emoji)} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-all hover:opacity-80" style={{ background: r.user_ids?.includes(user.id) ? "rgba(0,255,136,0.15)" : "rgba(255,255,255,0.06)", border: r.user_ids?.includes(user.id) ? "1px solid rgba(0,255,136,0.3)" : "1px solid rgba(255,255,255,0.1)", color: "#8899bb" }}>
                               <span>{r.emoji}</span>
                               <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600 }}>{r.count}</span>
                             </button>
                           ))}
+                          {!msg.is_removed && (
+                            <button onClick={() => toggleReaction(msg.id, "👍")} className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity hover:opacity-80" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "#6b7fa3" }}>
+                              <Icon name="Smile" size={11} />
+                            </button>
+                          )}
                         </div>
+                      )}
+                      {msg.reactions.length === 0 && !msg.is_removed && (
+                        <button onClick={() => toggleReaction(msg.id, "👍")} className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity hover:opacity-80 mt-1" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "#6b7fa3" }}>
+                          <Icon name="Smile" size={11} />
+                        </button>
                       )}
                     </div>
                   </div>
@@ -711,7 +1035,12 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
                   />
                   <div className="flex items-center gap-1">
                     <button className="hover:opacity-70 transition-opacity"><Icon name="Smile" size={16} style={{ color: "#6b7fa3" }} /></button>
-                    <button className="hover:opacity-70 transition-opacity"><Icon name="Paperclip" size={16} style={{ color: "#6b7fa3" }} /></button>
+                    <button onClick={() => fileInputRef.current?.click()} disabled={uploadingFile}
+                      className="p-1.5 rounded-lg cursor-pointer hover:opacity-80"
+                      style={{ background: "rgba(0,255,136,0.1)", color: "#00ff88", border: "none" }}
+                      title="Прикрепить файл">
+                      <Icon name={uploadingFile ? "Loader2" : "Paperclip"} size={16} />
+                    </button>
                     <button onClick={sendMessage} className="w-7 h-7 rounded-lg flex items-center justify-center transition-all hover:opacity-90" style={{ background: "rgba(0,255,136,0.15)", color: "#00ff88" }}>
                       <Icon name="Send" size={13} />
                     </button>
@@ -974,69 +1303,104 @@ export default function Index({ user, avatarImg, onLogout, onAvatarChange }: Ind
       {!dmMode && activeTab === "chat" && (
         <div className="w-[210px] shrink-0 overflow-y-auto py-3" style={{ background: "var(--dark-panel)", borderLeft: "1px solid rgba(0,255,136,0.08)" }}>
           <div className="px-3">
-            {/* Group by role */}
-            {ROLES.map(role => {
-              const roleMembers = MEMBERS.filter(m => m.role === role.name && m.status !== "offline");
-              if (roleMembers.length === 0) return null;
-              return (
-                <div key={role.id} className="mb-3">
-                  <div className="flex items-center gap-1.5 mb-1.5 px-1">
-                    <div className="w-2 h-2 rounded-full" style={{ background: role.color }} />
-                    <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px", color: role.color, textTransform: "uppercase", letterSpacing: "0.8px" }}>
-                      {role.name} — {roleMembers.length}
-                    </span>
-                  </div>
-                  {roleMembers.map(member => (
-                    <div key={member.id} onClick={() => setProfileMember(member)}
-                      className="flex items-center gap-2 py-1.5 px-2 rounded-xl cursor-pointer transition-all" style={{ marginBottom: "1px" }}
-                      onMouseEnter={e => (e.currentTarget.style.background = role.color + "10")}
-                      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-                    >
-                      <div className="relative shrink-0">
-                        <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: member.color + "22", color: member.color, border: `1px solid ${member.color}33`, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
-                          {member.avatar}
-                        </div>
-                        <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 status-${member.status}`} style={{ borderColor: "var(--dark-panel)" }} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px", color: member.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{member.name}</div>
-                        {member.status === "streaming"
-                          ? <div style={{ fontFamily: "Rajdhani, sans-serif", fontSize: "9px", color: "#ff00aa" }}>🔴 В эфире</div>
-                          : member.game && <div style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "9px", color: "#6b7fa3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{member.game}</div>
-                        }
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              );
-            })}
-
-            {/* Offline */}
-            {MEMBERS.filter(m => m.status === "offline").length > 0 && (
-              <div className="mb-2">
-                <div className="flex items-center gap-1.5 mb-1.5 px-1">
-                  <div className="w-2 h-2 rounded-full" style={{ background: "#4a5568" }} />
-                  <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px", color: "#4a5568", textTransform: "uppercase", letterSpacing: "0.8px" }}>
-                    Офлайн — {MEMBERS.filter(m => m.status === "offline").length}
-                  </span>
-                </div>
-                {MEMBERS.filter(m => m.status === "offline").map(member => (
-                  <div key={member.id} onClick={() => setProfileMember(member)}
-                    className="flex items-center gap-2 py-1.5 px-2 rounded-xl cursor-pointer transition-all" style={{ marginBottom: "1px", opacity: 0.4 }}
-                    onMouseEnter={e => (e.currentTarget.style.opacity = "0.65")}
-                    onMouseLeave={e => (e.currentTarget.style.opacity = "0.4")}
+            {/* Online counter from API */}
+            {onlineMembers.length > 0 && (
+              <div className="flex items-center gap-1.5 mb-3 px-1">
+                <div className="w-2 h-2 rounded-full" style={{ background: "#00ff88", boxShadow: "0 0 4px #00ff88" }} />
+                <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px", color: "#00ff88", textTransform: "uppercase", letterSpacing: "0.8px" }}>
+                  Онлайн — {onlineMembers.length}
+                </span>
+              </div>
+            )}
+            {/* Online members from API */}
+            {onlineMembers.length > 0 ? (
+              <div className="mb-3">
+                {onlineMembers.map(om => (
+                  <div key={om.id}
+                    className="flex items-center gap-2 py-1.5 px-2 rounded-xl cursor-pointer transition-all" style={{ marginBottom: "1px" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = om.avatar_color + "10")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                   >
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: "#1a2030", color: "#4a5568", fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
-                      {member.avatar}
+                    <div className="relative shrink-0">
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: om.avatar_color + "22", color: om.avatar_color, border: `1px solid ${om.avatar_color}33`, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
+                        {om.username.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 status-${om.status}`} style={{ borderColor: "var(--dark-panel)" }} />
                     </div>
-                    <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "12px", color: "#4a5568", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{member.name}</div>
+                    <div className="min-w-0 flex-1">
+                      <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px", color: om.avatar_color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{om.username}</div>
+                    </div>
                   </div>
                 ))}
               </div>
+            ) : (
+              <>
+                {/* Fallback: Group by role (static data) */}
+                {ROLES.map(role => {
+                  const roleMembers = MEMBERS.filter(m => m.role === role.name && m.status !== "offline");
+                  if (roleMembers.length === 0) return null;
+                  return (
+                    <div key={role.id} className="mb-3">
+                      <div className="flex items-center gap-1.5 mb-1.5 px-1">
+                        <div className="w-2 h-2 rounded-full" style={{ background: role.color }} />
+                        <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px", color: role.color, textTransform: "uppercase", letterSpacing: "0.8px" }}>
+                          {role.name} — {roleMembers.length}
+                        </span>
+                      </div>
+                      {roleMembers.map(member => (
+                        <div key={member.id} onClick={() => setProfileMember(member)}
+                          className="flex items-center gap-2 py-1.5 px-2 rounded-xl cursor-pointer transition-all" style={{ marginBottom: "1px" }}
+                          onMouseEnter={e => (e.currentTarget.style.background = role.color + "10")}
+                          onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                        >
+                          <div className="relative shrink-0">
+                            <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: member.color + "22", color: member.color, border: `1px solid ${member.color}33`, fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
+                              {member.avatar}
+                            </div>
+                            <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 status-${member.status}`} style={{ borderColor: "var(--dark-panel)" }} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "12px", color: member.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{member.name}</div>
+                            {member.status === "streaming"
+                              ? <div style={{ fontFamily: "Rajdhani, sans-serif", fontSize: "9px", color: "#ff00aa" }}>🔴 В эфире</div>
+                              : member.game && <div style={{ fontFamily: "IBM Plex Sans, sans-serif", fontSize: "9px", color: "#6b7fa3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{member.game}</div>
+                            }
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+
+                {/* Offline (static) */}
+                {MEMBERS.filter(m => m.status === "offline").length > 0 && (
+                  <div className="mb-2">
+                    <div className="flex items-center gap-1.5 mb-1.5 px-1">
+                      <div className="w-2 h-2 rounded-full" style={{ background: "#4a5568" }} />
+                      <span style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px", color: "#4a5568", textTransform: "uppercase", letterSpacing: "0.8px" }}>
+                        Офлайн — {MEMBERS.filter(m => m.status === "offline").length}
+                      </span>
+                    </div>
+                    {MEMBERS.filter(m => m.status === "offline").map(member => (
+                      <div key={member.id} onClick={() => setProfileMember(member)}
+                        className="flex items-center gap-2 py-1.5 px-2 rounded-xl cursor-pointer transition-all" style={{ marginBottom: "1px", opacity: 0.4 }}
+                        onMouseEnter={e => (e.currentTarget.style.opacity = "0.65")}
+                        onMouseLeave={e => (e.currentTarget.style.opacity = "0.4")}
+                      >
+                        <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: "#1a2030", color: "#4a5568", fontFamily: "Rajdhani, sans-serif", fontWeight: 700, fontSize: "10px" }}>
+                          {member.avatar}
+                        </div>
+                        <div style={{ fontFamily: "Rajdhani, sans-serif", fontWeight: 600, fontSize: "12px", color: "#4a5568", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{member.name}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
       )}
     </div>
+    </>
   );
 }

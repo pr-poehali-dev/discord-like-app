@@ -1,0 +1,21 @@
+{
+  "tests": [
+    {
+      "name": "POST heartbeat",
+      "method": "POST",
+      "path": "/",
+      "body": {"user_id": 1, "status": "online"},
+      "expectedStatus": 200,
+      "expectedBody": {"ok": true},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET online users",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200,
+      "expectedBody": {"online": []},
+      "bodyMatcher": "partial"
+    }
+  ]
+}
