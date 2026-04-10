@@ -80,6 +80,8 @@ const EMOJI_LIST = ["👍","❤️","😂","😮","😢","🔥","⚔️","🏆",
 
 type Tab = "friends" | "pending" | "blocked";
 
+const OUTGOING_CALL_TIMEOUT_MS = 30000;
+
 export default function DMView({
   user, avatarImg, onOpenSettings, micMuted, headphonesDeaf,
   onToggleMic, onToggleDeaf, myStatusColor, myStatusLabel, onOpenStatusMenu,
@@ -87,41 +89,27 @@ export default function DMView({
   const rF = { fontFamily: "Rajdhani, sans-serif" };
   const iF = { fontFamily: "IBM Plex Sans, sans-serif" };
 
-  // Активный диалог
   const [activeConvo, setActiveConvo] = useState<Convo | null>(null);
-  // Список диалогов
   const [convos, setConvos] = useState<Convo[]>([]);
-  // Сообщения текущего диалога
   const [msgs, setMsgs] = useState<Msg[]>([]);
-  // Ввод
   const [input, setInput] = useState("");
-  // Вкладка (друзья/входящие/заблокированные)
   const [tab, setTab] = useState<Tab>("friends");
-  // Поиск на главном экране
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
   const [searching, setSearching] = useState(false);
-  // Друзья
   const [friends, setFriends] = useState<Friend[]>([]);
   const [pending, setPending] = useState<Friend[]>([]);
-  // Добавить друга
   const [addInput, setAddInput] = useState("");
   const [addStatus, setAddStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [addError, setAddError] = useState("");
   const [addingFriendId, setAddingFriendId] = useState<number | null>(null);
   const [addedFriendIds, setAddedFriendIds] = useState<Set<number>>(new Set());
-  // Контекст сообщения
   const [menuMsgId, setMenuMsgId] = useState<number | null>(null);
-  // Редактирование
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
-  // Реакции (эмодзи пикер над сообщением)
   const [emojiPickerMsgId, setEmojiPickerMsgId] = useState<number | null>(null);
-  // Поиск по собеседникам в сайдбаре
   const [sidebarSearch, setSidebarSearch] = useState("");
-  // Загрузка
   const [loadingMsgs, setLoadingMsgs] = useState(false);
-  // Звонок
   const [callActive, setCallActive] = useState(false);
   const [callVideo, setCallVideo] = useState(false);
   const [callTimer, setCallTimer] = useState(0);
@@ -132,10 +120,11 @@ export default function DMView({
   const [callRemoteUserId, setCallRemoteUserId] = useState<number | null>(null);
   const [isCallInitiator, setIsCallInitiator] = useState(false);
   const [showDevicePicker, setShowDevicePicker] = useState(false);
-  // Входящий звонок
   const [incomingCall, setIncomingCall] = useState<{ call_id: number; caller_id: number; caller_name: string; caller_color: string; call_type: "audio" | "video" } | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showAddFriendForm, setShowAddFriendForm] = useState(false);
+  const [isTyping, _setIsTyping] = useState(false);
 
-  // WebRTC хук — активен только во время звонка
   const webrtc = useWebRTC({
     userId: user.id,
     callId: outgoingCallId,
@@ -154,17 +143,40 @@ export default function DMView({
   const callPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const outgoingCallPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const screenVideoRef = useRef<HTMLVideoElement | null>(null);
+  const outgoingCallTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Загрузка диалогов ──────────────────────────────────
+  useEffect(() => {
+    if (callActive && !webrtc.localStream) {
+      if (callTimerRef.current) { clearInterval(callTimerRef.current); callTimerRef.current = null; }
+      if (outgoingCallPollRef.current) { clearInterval(outgoingCallPollRef.current); outgoingCallPollRef.current = null; }
+      if (outgoingCallTimeoutRef.current) { clearTimeout(outgoingCallTimeoutRef.current); outgoingCallTimeoutRef.current = null; }
+      if (screenShareStream) { screenShareStream.getTracks().forEach(t => t.stop()); setScreenShareStream(null); setIsScreenSharing(false); }
+      setCallActive(false);
+      setCallVideo(false);
+      setCallTimer(0);
+      setOutgoingCallId(null);
+      setCallRemoteUserId(null);
+      setIsCallInitiator(false);
+      setOutgoingCallStatus("ringing");
+    }
+  }, [callActive, webrtc.localStream, screenShareStream]);
+
   const fetchConvos = useCallback(async () => {
     try {
       const res = await fetch(`${DM_URL}?action=conversations&user_id=${user.id}`);
       const data = await res.json();
-      if (data.conversations) setConvos(data.conversations);
+      if (data.conversations) {
+        const sorted = [...data.conversations].sort((a: Convo, b: Convo) => {
+          if (!a.last_time && !b.last_time) return 0;
+          if (!a.last_time) return 1;
+          if (!b.last_time) return -1;
+          return b.last_time.localeCompare(a.last_time);
+        });
+        setConvos(sorted);
+      }
     } catch { /* silent */ }
   }, [user.id]);
 
-  // ── Загрузка друзей ────────────────────────────────────
   const fetchFriends = useCallback(async () => {
     try {
       const [accRes, pendRes] = await Promise.all([
@@ -177,7 +189,6 @@ export default function DMView({
     } catch { /* silent */ }
   }, [user.id]);
 
-  // ── Polling входящих звонков ───────────────────────────
   useEffect(() => {
     const poll = async () => {
       try {
@@ -193,7 +204,12 @@ export default function DMView({
     return () => { if (callPollRef.current) clearInterval(callPollRef.current); };
   }, [user.id, callActive]);
 
-  // ── Звонок ─────────────────────────────────────────────
+  useEffect(() => {
+    if (callActive && incomingCall) {
+      setIncomingCall(null);
+    }
+  }, [callActive, incomingCall]);
+
   const startCall = async (withVideo = false) => {
     if (!activeConvo) return;
     setCallVideo(withVideo);
@@ -220,13 +236,25 @@ export default function DMView({
             if (d.status === "accepted") {
               setOutgoingCallStatus("accepted");
               if (outgoingCallPollRef.current) clearInterval(outgoingCallPollRef.current);
+              if (outgoingCallTimeoutRef.current) { clearTimeout(outgoingCallTimeoutRef.current); outgoingCallTimeoutRef.current = null; }
             } else if (d.status === "declined" || d.status === "cancelled") {
               setOutgoingCallStatus(d.status as "declined" | "cancelled");
               if (outgoingCallPollRef.current) clearInterval(outgoingCallPollRef.current);
+              if (outgoingCallTimeoutRef.current) { clearTimeout(outgoingCallTimeoutRef.current); outgoingCallTimeoutRef.current = null; }
               setTimeout(() => endCall(), 2000);
             }
           } catch { /* silent */ }
         }, 2000);
+
+        outgoingCallTimeoutRef.current = setTimeout(() => {
+          setOutgoingCallStatus((prev) => {
+            if (prev === "ringing") {
+              endCall();
+              return "cancelled";
+            }
+            return prev;
+          });
+        }, OUTGOING_CALL_TIMEOUT_MS);
       }
     } catch { /* silent */ }
 
@@ -238,6 +266,7 @@ export default function DMView({
   const endCall = () => {
     if (callTimerRef.current) { clearInterval(callTimerRef.current); callTimerRef.current = null; }
     if (outgoingCallPollRef.current) { clearInterval(outgoingCallPollRef.current); outgoingCallPollRef.current = null; }
+    if (outgoingCallTimeoutRef.current) { clearTimeout(outgoingCallTimeoutRef.current); outgoingCallTimeoutRef.current = null; }
     if (screenShareStream) { screenShareStream.getTracks().forEach(t => t.stop()); setScreenShareStream(null); setIsScreenSharing(false); }
     webrtc.hangup();
     if (outgoingCallId) {
@@ -266,7 +295,6 @@ export default function DMView({
       last_msg: "", last_time: "", is_online: true,
     };
     setActiveConvo(convo);
-    // Настраиваем WebRTC как принимающий
     setOutgoingCallId(incomingCall.call_id);
     setCallRemoteUserId(incomingCall.caller_id);
     setIsCallInitiator(false);
@@ -286,11 +314,6 @@ export default function DMView({
     setIncomingCall(null);
   };
 
-  const toggleCallMic = () => {
-    if (localStream) localStream.getAudioTracks().forEach(t => { t.enabled = callMuted; });
-    setCallMuted(v => !v);
-  };
-
   const startCallScreenShare = async () => {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
@@ -298,7 +321,7 @@ export default function DMView({
       setIsScreenSharing(true);
       setTimeout(() => { if (screenVideoRef.current) screenVideoRef.current.srcObject = stream; }, 100);
       stream.getVideoTracks()[0].onended = () => { setScreenShareStream(null); setIsScreenSharing(false); };
-    } catch { /* отмена */ }
+    } catch { /* cancel */ }
   };
 
   const stopCallScreenShare = () => {
@@ -309,7 +332,6 @@ export default function DMView({
   const fmtTime = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
-  // ── Загрузка сообщений ─────────────────────────────────
   const fetchMsgs = useCallback(async (partnerId: number, reset = false) => {
     const afterId = reset ? 0 : lastIdRef.current;
     try {
@@ -326,7 +348,6 @@ export default function DMView({
     } catch { /* silent */ }
   }, [user.id]);
 
-  // При смене диалога
   useEffect(() => {
     if (pollingRef.current) clearInterval(pollingRef.current);
     if (!activeConvo) return;
@@ -339,7 +360,6 @@ export default function DMView({
     return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, [activeConvo?.user_id]);
 
-  // Начальная загрузка
   useEffect(() => {
     fetchConvos();
     fetchFriends();
@@ -347,7 +367,6 @@ export default function DMView({
     return () => clearInterval(convoPoll);
   }, [fetchConvos, fetchFriends]);
 
-  // ── Открыть диалог ─────────────────────────────────────
   const openConvo = (u: { id: number; username: string; avatar_color: string; is_online: boolean; user_status?: string; status?: string }) => {
     const convo: Convo = {
       user_id: u.id,
@@ -361,10 +380,10 @@ export default function DMView({
     setActiveConvo(convo);
     setMenuMsgId(null);
     setEditingId(null);
+    setSidebarOpen(false);
     setTimeout(() => inputRef.current?.focus(), 100);
   };
 
-  // ── Отправить сообщение ────────────────────────────────
   const sendMsg = async () => {
     if (!input.trim() || !activeConvo) return;
     const text = input.trim();
@@ -385,7 +404,6 @@ export default function DMView({
     } catch { /* silent */ }
   };
 
-  // ── Редактировать сообщение ────────────────────────────
   const editMsg = async (id: number, text: string) => {
     try {
       await fetch(DM_URL, {
@@ -399,7 +417,6 @@ export default function DMView({
     } catch { /* silent */ }
   };
 
-  // ── Удалить сообщение ──────────────────────────────────
   const removeMsg = async (id: number) => {
     try {
       await fetch(DM_URL, {
@@ -412,7 +429,6 @@ export default function DMView({
     } catch { /* silent */ }
   };
 
-  // ── Добавить друга по username (из поля ввода) ──────────
   const addFriend = async () => {
     if (!addInput.trim()) return;
     setAddStatus("sending");
@@ -441,7 +457,6 @@ export default function DMView({
     }
   };
 
-  // ── Добавить друга прямо из результатов поиска ──────────
   const addFriendById = async (targetUser: SearchUser) => {
     if (addingFriendId === targetUser.id) return;
     setAddingFriendId(targetUser.id);
@@ -460,7 +475,6 @@ export default function DMView({
     setAddingFriendId(null);
   };
 
-  // ── Принять/отклонить заявку ───────────────────────────
   const respondFriend = async (friendId: number, accept: boolean) => {
     try {
       await fetch(DM_URL, {
@@ -472,7 +486,6 @@ export default function DMView({
     } catch { /* silent */ }
   };
 
-  // ── Удалить друга ──────────────────────────────────────
   const removeFriend = async (friendId: number) => {
     try {
       await fetch(DM_URL, {
@@ -484,7 +497,6 @@ export default function DMView({
     } catch { /* silent */ }
   };
 
-  // ── Поиск пользователей ────────────────────────────────
   const doSearch = async (q: string) => {
     setSearchQuery(q);
     if (q.trim().length < 2) { setSearchResults([]); return; }
@@ -497,7 +509,6 @@ export default function DMView({
     setSearching(false);
   };
 
-  // ── Sidebar фильтр ─────────────────────────────────────
   const filteredConvos = convos.filter(c =>
     c.username.toLowerCase().includes(sidebarSearch.toLowerCase())
   );
@@ -505,12 +516,10 @@ export default function DMView({
   const incomingPending = pending.filter(f => f.direction === "incoming");
   const outgoingPending = pending.filter(f => f.direction === "outgoing");
 
-  // ── Рендер ─────────────────────────────────────────────
   return (
     <div className="flex h-screen overflow-hidden" style={{ fontFamily: "IBM Plex Sans, sans-serif", background: "var(--dark-bg)" }}
       onClick={() => { setMenuMsgId(null); setEmojiPickerMsgId(null); }}>
 
-      {/* Входящий звонок */}
       {incomingCall && !callActive && (
         <IncomingCall
           callerName={incomingCall.caller_name}
@@ -521,15 +530,31 @@ export default function DMView({
         />
       )}
 
-      {/* Настройки устройств */}
       {showDevicePicker && (
         <DeviceSettingsPanel withVideo={callVideo} onClose={() => setShowDevicePicker(false)} />
       )}
 
-      {/* Сайдбар */}
-      <div className="flex flex-col w-60 shrink-0" style={{ background: "var(--dark-panel)", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
+      {/* Mobile sidebar toggle */}
+      <button
+        className="fixed top-3 left-3 z-50 w-9 h-9 rounded-xl flex items-center justify-center md:hidden"
+        style={{ background: "var(--dark-panel)", border: "1px solid rgba(0,255,136,0.15)", color: "#00ff88" }}
+        onClick={(e) => { e.stopPropagation(); setSidebarOpen(v => !v); }}>
+        <Icon name={sidebarOpen ? "X" : "Menu"} size={18} />
+      </button>
 
-        {/* Поиск в сайдбаре */}
+      {/* Sidebar overlay for mobile */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black bg-opacity-50 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <div
+        className={`flex flex-col w-60 shrink-0 z-40 transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0 fixed md:relative h-full`}
+        style={{ background: "var(--dark-panel)", borderRight: "1px solid rgba(0,255,136,0.08)" }}>
+
         <div className="px-3 pt-3 pb-2">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl" style={{ background: "#0d1424", border: "1px solid rgba(255,255,255,0.07)" }}>
             <Icon name="Search" size={13} style={{ color: "#6b7fa3" }} />
@@ -543,9 +568,8 @@ export default function DMView({
           </div>
         </div>
 
-        {/* Кнопка "Друзья" */}
         <button
-          onClick={() => { setActiveConvo(null); setTab("friends"); }}
+          onClick={() => { setActiveConvo(null); setTab("friends"); setSidebarOpen(false); }}
           className="flex items-center gap-3 mx-2 px-3 py-2 rounded-xl mb-1 transition-all"
           style={{ background: !activeConvo && tab === "friends" ? "rgba(0,255,136,0.1)" : "transparent", color: !activeConvo && tab === "friends" ? "#00ff88" : "#8899bb" }}>
           <Icon name="Users" size={16} />
@@ -557,7 +581,6 @@ export default function DMView({
           )}
         </button>
 
-        {/* Диалоги */}
         {filteredConvos.length > 0 && (
           <div className="px-3 mb-1">
             <span style={{ ...rF, fontWeight: 600, fontSize: "10px", color: "#4a5568", textTransform: "uppercase", letterSpacing: "1px" }}>
@@ -587,7 +610,7 @@ export default function DMView({
                 </div>
                 {c.last_msg && (
                   <div style={{ ...iF, fontSize: "11px", color: "#4a5568", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {c.last_msg.slice(0, 25)}{c.last_msg.length > 25 ? "…" : ""}
+                    {c.last_msg.slice(0, 25)}{c.last_msg.length > 25 ? "..." : ""}
                   </div>
                 )}
               </div>
@@ -596,7 +619,6 @@ export default function DMView({
           ))}
         </div>
 
-        {/* Футер пользователя */}
         <div className="px-2 py-2 mt-auto" style={{ borderTop: "1px solid rgba(0,255,136,0.08)" }}>
           <div className="flex items-center gap-2 px-2 py-1.5 rounded-xl" style={{ background: "rgba(255,255,255,0.03)" }}>
             <div className="relative cursor-pointer" onClick={onOpenStatusMenu}>
@@ -620,12 +642,9 @@ export default function DMView({
         </div>
       </div>
 
-      {/* Основная зона */}
       {activeConvo ? (
-        /* ── ЧАТ ───────────────────────────────────────────── */
         <div className="flex-1 flex flex-col min-w-0">
 
-          {/* Шапка */}
           <div className="flex items-center gap-3 px-4 py-3 shrink-0" style={{ borderBottom: "1px solid rgba(0,255,136,0.08)", background: "var(--dark-panel)" }}>
             <button onClick={() => setActiveConvo(null)} className="hover:opacity-70 transition-opacity mr-1">
               <Icon name="ChevronLeft" size={18} style={{ color: "#6b7fa3" }} />
@@ -641,13 +660,12 @@ export default function DMView({
             <div>
               <div style={{ ...rF, fontWeight: 700, fontSize: "16px", color: activeConvo.avatar_color }}>{activeConvo.username}</div>
               <div style={{ ...iF, fontSize: "11px", color: activeConvo.is_online ? STATUS_COLOR.online : "#6b7fa3" }}>
-                {activeConvo.is_online ? "В сети" : "Не в сети"}
+                {isTyping ? "печатает..." : activeConvo.is_online ? "В сети" : "Не в сети"}
               </div>
             </div>
             <div className="ml-auto flex items-center gap-2">
               {callActive ? (
                 <>
-                  {/* Статус / индикатор подключения */}
                   {outgoingCallStatus === "ringing" && isCallInitiator ? (
                     <span style={{ ...iF, fontSize: "12px", color: "#6b7fa3" }} className="animate-pulse">Вызов...</span>
                   ) : outgoingCallStatus === "declined" ? (
@@ -658,29 +676,24 @@ export default function DMView({
                       <span style={{ ...rF, fontWeight: 700, fontSize: "13px", color: webrtc.connected ? "#00ff88" : "#ff6600" }}>{fmtTime(callTimer)}</span>
                     </div>
                   )}
-                  {/* Мут микрофона */}
                   <button onClick={() => webrtc.setMicMuted(!webrtc.micMuted)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
                     style={{ background: webrtc.micMuted ? "rgba(255,68,68,0.2)" : "rgba(0,255,136,0.1)", color: webrtc.micMuted ? "#ff4444" : "#00ff88" }} title={webrtc.micMuted ? "Включить микрофон" : "Выключить микрофон"}>
                     <Icon name={webrtc.micMuted ? "MicOff" : "Mic"} size={15} />
                   </button>
-                  {/* Деафен */}
                   <button onClick={() => webrtc.setDeafened(!webrtc.deafened)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
                     style={{ background: webrtc.deafened ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.06)", color: webrtc.deafened ? "#ff4444" : "#6b7fa3" }} title={webrtc.deafened ? "Включить звук" : "Выключить звук"}>
                     <Icon name={webrtc.deafened ? "VolumeX" : "Headphones"} size={15} />
                   </button>
-                  {/* Трансляция экрана */}
                   {callVideo && (
                     <button onClick={isScreenSharing ? stopCallScreenShare : startCallScreenShare} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
                       style={{ background: isScreenSharing ? "rgba(255,0,170,0.2)" : "rgba(0,170,255,0.1)", color: isScreenSharing ? "#ff00aa" : "#00aaff" }} title="Трансляция экрана">
                       <Icon name={isScreenSharing ? "MonitorOff" : "MonitorPlay"} size={15} />
                     </button>
                   )}
-                  {/* Устройства */}
                   <button onClick={() => setShowDevicePicker(true)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
                     style={{ background: "rgba(255,255,255,0.06)", color: "#6b7fa3" }} title="Настройки устройств">
                     <Icon name="Settings2" size={15} />
                   </button>
-                  {/* Завершить */}
                   <button onClick={endCall} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-80"
                     style={{ background: "rgba(255,68,68,0.2)", color: "#ff4444" }} title="Завершить звонок">
                     <Icon name="PhoneOff" size={15} />
@@ -694,7 +707,6 @@ export default function DMView({
                   <button onClick={() => startCall(true)} className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity" style={{ background: "rgba(0,170,255,0.08)" }} title="Видеозвонок">
                     <Icon name="Video" size={15} style={{ color: "#00aaff" }} />
                   </button>
-                  {/* Настройки устройств (всегда доступны) */}
                   <button onClick={() => setShowDevicePicker(true)}
                     className="w-8 h-8 rounded-xl flex items-center justify-center hover:opacity-70 transition-opacity"
                     style={{ background: "rgba(255,255,255,0.05)" }} title="Настройки микрофона и динамика">
@@ -708,14 +720,12 @@ export default function DMView({
             </div>
           </div>
 
-          {/* Видео звонок */}
           {callActive && callVideo && (
             <div className="shrink-0 relative" style={{ height: "240px", background: "#060a11", borderBottom: "1px solid rgba(0,255,136,0.08)" }}>
               {isScreenSharing && screenShareStream ? (
                 <video ref={screenVideoRef} autoPlay muted playsInline className="w-full h-full object-contain" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center gap-8">
-                  {/* Удалённое видео собеседника */}
                   <div className="flex flex-col items-center gap-2">
                     {webrtc.remoteStream && webrtc.remoteStream.getVideoTracks().length > 0 ? (
                       <video autoPlay playsInline className="w-32 h-32 rounded-2xl object-cover"
@@ -729,7 +739,6 @@ export default function DMView({
                     )}
                     <span style={{ ...rF, fontWeight: 700, fontSize: "12px", color: activeConvo.avatar_color }}>{activeConvo.username}</span>
                   </div>
-                  {/* Моё локальное видео */}
                   <div className="flex flex-col items-center gap-2">
                     {webrtc.localStream && webrtc.localStream.getVideoTracks().length > 0 ? (
                       <video autoPlay muted playsInline className="w-24 h-24 rounded-2xl object-cover"
@@ -754,7 +763,6 @@ export default function DMView({
             </div>
           )}
 
-          {/* Аудио звонок (без видео) */}
           {callActive && !callVideo && (
             <div className="shrink-0 flex items-center justify-center gap-6 py-4" style={{ background: "rgba(0,255,136,0.04)", borderBottom: "1px solid rgba(0,255,136,0.08)" }}>
               <div className="flex flex-col items-center gap-2">
@@ -772,7 +780,6 @@ export default function DMView({
             </div>
           )}
 
-          {/* Сообщения */}
           <div className="flex-1 overflow-y-auto px-4 py-4" onClick={() => { setMenuMsgId(null); setEmojiPickerMsgId(null); }}>
             {loadingMsgs && (
               <div className="flex justify-center py-8">
@@ -791,7 +798,6 @@ export default function DMView({
               </div>
             )}
 
-            {/* Группировка по дате */}
             {(() => {
               let lastDate = "";
               return msgs.map((msg, i) => {
@@ -813,7 +819,6 @@ export default function DMView({
                       className={`flex gap-2 group relative ${showAvatar ? "mt-3" : "mt-0.5"} ${isMe ? "flex-row-reverse" : "flex-row"}`}
                       onMouseLeave={() => { setMenuMsgId(null); setEmojiPickerMsgId(null); }}>
 
-                      {/* Аватар */}
                       <div className="shrink-0 w-8" style={{ alignSelf: "flex-end" }}>
                         {showAvatar && !isMe && (
                           <div className="w-8 h-8 rounded-full flex items-center justify-center"
@@ -826,7 +831,6 @@ export default function DMView({
                         )}
                       </div>
 
-                      {/* Пузырь */}
                       <div className={`max-w-[70%] ${isMe ? "items-end" : "items-start"} flex flex-col`}>
                         {showAvatar && (
                           <div className={`flex items-baseline gap-2 mb-1 ${isMe ? "flex-row-reverse" : ""}`}>
@@ -852,7 +856,6 @@ export default function DMView({
                           </div>
                         ) : (
                           <div className="relative">
-                            {/* Контекст-кнопки при hover */}
                             <div className={`absolute top-0 ${isMe ? "left-0 -translate-x-full pr-1" : "right-0 translate-x-full pl-1"} opacity-0 group-hover:opacity-100 transition-opacity flex gap-1`}
                               onClick={e => e.stopPropagation()}>
                               <button
@@ -873,7 +876,6 @@ export default function DMView({
                               )}
                             </div>
 
-                            {/* Эмодзи пикер */}
                             {emojiPickerMsgId === msg.id && (
                               <div className={`absolute z-50 bottom-full mb-1 ${isMe ? "right-0" : "left-0"} flex gap-1 p-2 rounded-xl`}
                                 style={{ background: "#0d1424", border: "1px solid rgba(0,255,136,0.2)", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}
@@ -888,7 +890,6 @@ export default function DMView({
                               </div>
                             )}
 
-                            {/* Контекстное меню */}
                             {menuMsgId === msg.id && (
                               <div className={`absolute z-50 bottom-full mb-1 ${isMe ? "right-0" : "left-0"} rounded-xl overflow-hidden`}
                                 style={{ background: "#0d1424", border: "1px solid rgba(255,68,68,0.2)", minWidth: "140px", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}
@@ -906,7 +907,6 @@ export default function DMView({
                               </div>
                             )}
 
-                            {/* Сам пузырь */}
                             <div className="px-3 py-2 rounded-2xl"
                               style={{
                                 background: isMe
@@ -918,7 +918,6 @@ export default function DMView({
                                 borderBottomRightRadius: isMe ? "6px" : "18px",
                                 borderBottomLeftRadius: isMe ? "18px" : "6px",
                               }}>
-                              {/* Файл */}
                               {msg.file_url && !msg.is_removed && (
                                 <div className="mb-2">
                                   {msg.file_type?.startsWith("image/") ? (
@@ -954,8 +953,12 @@ export default function DMView({
             <div ref={msgsEndRef} />
           </div>
 
-          {/* Поле ввода */}
           <div className="px-4 py-3 shrink-0" style={{ borderTop: "1px solid rgba(0,255,136,0.08)" }}>
+            {isTyping && (
+              <div className="px-3 pb-1">
+                <span style={{ ...iF, fontSize: "12px", color: "#6b7fa3" }}>{activeConvo.username} печатает...</span>
+              </div>
+            )}
             <div className="flex items-center gap-2 px-3 py-2 rounded-2xl" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(0,255,136,0.12)" }}>
               <button onClick={() => fileInputRef.current?.click()} className="hover:opacity-70 transition-opacity" title="Прикрепить файл">
                 <Icon name="Paperclip" size={16} style={{ color: "#6b7fa3" }} />
@@ -984,10 +987,8 @@ export default function DMView({
           </div>
         </div>
       ) : (
-        /* ── ДРУЗЬЯ / ПОИСК ────────────────────────────────── */
         <div className="flex-1 flex flex-col min-w-0">
 
-          {/* Шапка */}
           <div className="flex items-center gap-4 px-6 py-3 shrink-0" style={{ borderBottom: "1px solid rgba(0,255,136,0.08)", background: "var(--dark-panel)" }}>
             <Icon name="Users" size={18} style={{ color: "#00ff88" }} />
             <span style={{ ...rF, fontWeight: 700, fontSize: "16px", color: "#e2e8f0" }}>Друзья</span>
@@ -1005,7 +1006,7 @@ export default function DMView({
             ))}
             <div className="ml-auto">
               <button
-                onClick={() => setTab("friends")}
+                onClick={() => { setTab("friends"); setShowAddFriendForm(v => !v); }}
                 className="px-4 py-1.5 rounded-xl transition-all hover:opacity-90"
                 style={{ ...rF, fontWeight: 700, fontSize: "13px", background: "rgba(0,255,136,0.15)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.3)" }}>
                 Добавить друга
@@ -1015,7 +1016,35 @@ export default function DMView({
 
           <div className="flex-1 overflow-y-auto px-6 py-4">
 
-            {/* Умный поиск: люди + добавление в друзья */}
+            {showAddFriendForm && (
+              <div className="mb-5 p-4 rounded-2xl" style={{ background: "rgba(0,255,136,0.04)", border: "1px solid rgba(0,255,136,0.15)" }}>
+                <div style={{ ...rF, fontWeight: 700, fontSize: "14px", color: "#e2e8f0", marginBottom: "8px" }}>Добавить друга по имени</div>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={addInput}
+                    onChange={e => setAddInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") addFriend(); }}
+                    placeholder="Введите имя пользователя..."
+                    className="flex-1 px-3 py-2 rounded-xl bg-transparent outline-none"
+                    style={{ ...iF, fontSize: "14px", color: "#e2e8f0", background: "#0d1424", border: "1px solid rgba(255,255,255,0.1)" }}
+                  />
+                  <button
+                    onClick={addFriend}
+                    disabled={addStatus === "sending" || !addInput.trim()}
+                    className="px-4 py-2 rounded-xl transition-all hover:opacity-90 disabled:opacity-50"
+                    style={{ ...rF, fontWeight: 700, fontSize: "13px", background: "rgba(0,255,136,0.15)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.3)" }}>
+                    {addStatus === "sending" ? <Icon name="Loader2" size={14} className="animate-spin" /> : "Отправить"}
+                  </button>
+                </div>
+                {addStatus === "sent" && (
+                  <div className="mt-2" style={{ ...iF, fontSize: "12px", color: "#00ff88" }}>Заявка отправлена!</div>
+                )}
+                {addStatus === "error" && (
+                  <div className="mt-2" style={{ ...iF, fontSize: "12px", color: "#ff4444" }}>{addError}</div>
+                )}
+              </div>
+            )}
+
             <div className="mb-5">
               <div className="flex items-center gap-2 px-4 py-2.5 rounded-2xl" style={{ background: "rgba(255,255,255,0.05)", border: `1px solid ${searchQuery ? "rgba(0,255,136,0.25)" : "rgba(255,255,255,0.08)"}`, transition: "border-color 0.2s" }}>
                 <Icon name={searching ? "Loader2" : "Search"} size={15} style={{ color: searching ? "#00ff88" : "#6b7fa3", flexShrink: 0 }} className={searching ? "animate-spin" : ""} />
@@ -1033,7 +1062,6 @@ export default function DMView({
                 )}
               </div>
 
-              {/* Результаты поиска с кнопкой добавить */}
               {searchQuery.trim().length >= 2 && (
                 <div className="mt-2 rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.07)", background: "rgba(255,255,255,0.02)" }}>
                   {searching && searchResults.length === 0 && (
@@ -1045,7 +1073,7 @@ export default function DMView({
                   {!searching && searchResults.length === 0 && (
                     <div className="flex items-center gap-3 px-4 py-3">
                       <Icon name="UserX" size={16} style={{ color: "#4a5568" }} />
-                      <span style={{ ...iF, fontSize: "13px", color: "#4a5568" }}>Никого не найдено по «{searchQuery}»</span>
+                      <span style={{ ...iF, fontSize: "13px", color: "#4a5568" }}>Никого не найдено по "{searchQuery}"</span>
                     </div>
                   )}
                   {searchResults.map((u, idx) => {
@@ -1058,7 +1086,6 @@ export default function DMView({
                       <div key={u.id} className="flex items-center gap-3 px-4 py-3 group hover:bg-white hover:bg-opacity-4 transition-colors cursor-pointer"
                         style={{ borderTop: idx > 0 ? "1px solid rgba(255,255,255,0.05)" : "none" }}
                         onClick={() => !isMe && openConvo({ id: u.id, username: u.username, avatar_color: u.avatar_color, is_online: u.is_online, status: u.status })}>
-                        {/* Аватар */}
                         <div className="relative shrink-0">
                           <div className="w-10 h-10 rounded-full flex items-center justify-center"
                             style={{ background: u.avatar_color + "22", color: u.avatar_color, border: `2px solid ${u.avatar_color}33`, ...rF, fontWeight: 800, fontSize: "13px" }}>
@@ -1067,14 +1094,12 @@ export default function DMView({
                           <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2"
                             style={{ background: u.is_online ? STATUS_COLOR.online : "#4a5568", borderColor: "var(--dark-bg)" }} />
                         </div>
-                        {/* Инфо */}
                         <div className="flex-1 min-w-0">
                           <div style={{ ...rF, fontWeight: 700, fontSize: "15px", color: u.avatar_color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.username}</div>
                           <div style={{ ...iF, fontSize: "12px", color: u.is_online ? "#00ff88" : "#4a5568" }}>
                             {u.is_online ? "В сети" : "Не в сети"}
                           </div>
                         </div>
-                        {/* Кнопки действий */}
                         {!isMe && (
                           <div className="flex items-center gap-2 shrink-0">
                             <button
@@ -1110,19 +1135,30 @@ export default function DMView({
               )}
             </div>
 
-            {/* Вкладка Друзья */}
             {tab === "friends" && !searchQuery && (
               <>
                 <div style={{ ...rF, fontWeight: 600, fontSize: "11px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "8px" }}>
                   Все друзья — {friends.length}
                 </div>
                 {friends.length === 0 && (
-                  <div className="text-center py-12" style={{ ...iF, fontSize: "14px", color: "#4a5568" }}>
-                    У тебя пока нет друзей. Добавь кого-нибудь!
+                  <div className="flex flex-col items-center justify-center py-16 gap-4">
+                    <div className="w-20 h-20 rounded-full flex items-center justify-center" style={{ background: "rgba(0,255,136,0.08)", border: "2px solid rgba(0,255,136,0.15)" }}>
+                      <Icon name="Users" size={32} style={{ color: "#00ff88" }} />
+                    </div>
+                    <div style={{ ...rF, fontWeight: 700, fontSize: "20px", color: "#e2e8f0" }}>Пока тут пусто</div>
+                    <div style={{ ...iF, fontSize: "14px", color: "#6b7fa3", textAlign: "center", maxWidth: "320px" }}>
+                      Найди друзей через поиск выше или нажми "Добавить друга" и введи имя пользователя.
+                    </div>
+                    <button
+                      onClick={() => setShowAddFriendForm(true)}
+                      className="px-5 py-2.5 rounded-xl transition-all hover:opacity-90"
+                      style={{ ...rF, fontWeight: 700, fontSize: "14px", background: "rgba(0,255,136,0.15)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.3)" }}>
+                      <Icon name="UserPlus" size={15} /> &nbsp;Добавить друга
+                    </button>
                   </div>
                 )}
                 {friends.map(f => (
-                  <div key={f.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1 group hover:bg-white hover:bg-opacity-5 transition-colors cursor-pointer"
+                  <div key={`friend-${f.id}-${f.direction || "accepted"}`} className="flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1 group hover:bg-white hover:bg-opacity-5 transition-colors cursor-pointer"
                     onClick={() => openConvo({ id: f.id, username: f.username, avatar_color: f.avatar_color, is_online: f.is_online, user_status: f.user_status })}>
                     <div className="relative">
                       <div className="w-10 h-10 rounded-full flex items-center justify-center"
@@ -1155,17 +1191,15 @@ export default function DMView({
               </>
             )}
 
-            {/* Вкладка Ожидание */}
             {tab === "pending" && !searchQuery && (
               <>
-                {/* Входящие */}
                 {incomingPending.length > 0 && (
                   <>
                     <div style={{ ...rF, fontWeight: 600, fontSize: "11px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "8px" }}>
                       Входящие — {incomingPending.length}
                     </div>
                     {incomingPending.map(f => (
-                      <div key={f.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1 hover:bg-white hover:bg-opacity-5 transition-colors">
+                      <div key={`incoming-${f.id}-${f.direction}`} className="flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1 hover:bg-white hover:bg-opacity-5 transition-colors">
                         <div className="w-10 h-10 rounded-full flex items-center justify-center"
                           style={{ background: f.avatar_color + "22", color: f.avatar_color, border: `1px solid ${f.avatar_color}33`, ...rF, fontWeight: 700, fontSize: "13px" }}>
                           {f.username.slice(0, 2).toUpperCase()}
@@ -1185,14 +1219,13 @@ export default function DMView({
                   </>
                 )}
 
-                {/* Исходящие */}
                 {outgoingPending.length > 0 && (
                   <>
                     <div style={{ ...rF, fontWeight: 600, fontSize: "11px", color: "#6b7fa3", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "8px", marginTop: "16px" }}>
                       Исходящие — {outgoingPending.length}
                     </div>
                     {outgoingPending.map(f => (
-                      <div key={f.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1 hover:bg-white hover:bg-opacity-5 transition-colors">
+                      <div key={`outgoing-${f.id}-${f.direction}`} className="flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1 hover:bg-white hover:bg-opacity-5 transition-colors">
                         <div className="w-10 h-10 rounded-full flex items-center justify-center"
                           style={{ background: f.avatar_color + "22", color: f.avatar_color, border: `1px solid ${f.avatar_color}33`, ...rF, fontWeight: 700, fontSize: "13px" }}>
                           {f.username.slice(0, 2).toUpperCase()}
@@ -1217,7 +1250,6 @@ export default function DMView({
               </>
             )}
 
-            {/* Заблокированные */}
             {tab === "blocked" && !searchQuery && (
               <div className="text-center py-12" style={{ ...iF, fontSize: "14px", color: "#4a5568" }}>
                 Нет заблокированных пользователей

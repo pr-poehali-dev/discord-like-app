@@ -100,10 +100,9 @@ def handler(event: dict, context) -> dict:
                 LEFT JOIN {SCHEMA}.online_presence op ON op.user_id = u.id
                 ORDER BY partner_id, last_time DESC
                 """,
-                (user_id, user_id, user_id)
             )
             rows = cur.fetchall()
-            convos = [
+            convos = sorted([
                 {
                     "user_id": r[0],
                     "username": r[1],
@@ -112,9 +111,12 @@ def handler(event: dict, context) -> dict:
                     "last_msg": r[4],
                     "last_time": r[5].strftime("%H:%M"),
                     "is_online": r[6],
+                    "sort_ts": r[5].isoformat(),
                 }
                 for r in rows
-            ]
+            ], key=lambda x: x["sort_ts"], reverse=True)
+            for c in convos:
+                del c["sort_ts"]
             return {"statusCode": 200, "headers": cors(), "body": json.dumps({"conversations": convos})}
 
         # ── GET поиск пользователей ──────────────────────────
@@ -288,10 +290,13 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors(), "body": json.dumps({"ok": True, "call_id": row[0]})}
 
-        # Опросить входящий звонок
         if action == "call_poll":
             user_id = int(params.get("user_id") or body.get("user_id"))
-            # Отдаём звонок только если он ringing и создан не позже 30 секунд назад
+            cur.execute(
+                f"UPDATE {SCHEMA}.call_invites SET status='cancelled' "
+                f"WHERE status='ringing' AND created_at < NOW() - INTERVAL '35 seconds'"
+            )
+            conn.commit()
             cur.execute(
                 f"SELECT id, caller_id, caller_name, caller_color, call_type "
                 f"FROM {SCHEMA}.call_invites "

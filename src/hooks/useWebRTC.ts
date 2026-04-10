@@ -4,12 +4,25 @@ export type { AudioDevice } from "./useAudioDevices";
 
 const DM_URL = "https://functions.poehali.dev/b026ce37-f295-45e6-9d62-287d071942eb";
 
-const ICE_SERVERS = {
+const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
+    {
+      urls: "turn:openrelay.metered.ca:80",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
   ],
 };
+
+const CALL_TIMEOUT_MS = 30000;
+const RECONNECT_TIMEOUT_MS = 5000;
 
 interface UseWebRTCOptions {
   userId: number;
@@ -56,19 +69,55 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const micMutedRef = useRef(false);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const callTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cleanupCalledRef = useRef(false);
+
+  const clearReconnectTimeout = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+  }, []);
+
+  const clearCallTimeout = useCallback(() => {
+    if (callTimeoutRef.current) {
+      clearTimeout(callTimeoutRef.current);
+      callTimeoutRef.current = null;
+    }
+  }, []);
+
+  const cleanup = useCallback(() => {
+    if (cleanupCalledRef.current) return;
+    cleanupCalledRef.current = true;
+    clearReconnectTimeout();
+    clearCallTimeout();
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    pcRef.current?.close();
+    pcRef.current = null;
+    localStreamRef.current?.getTracks().forEach(t => t.stop());
+    localStreamRef.current = null;
+    setLocalStream(null);
+    setRemoteStream(null);
+    setConnected(false);
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null;
+      remoteAudioRef.current = null;
+    }
+  }, [clearReconnectTimeout, clearCallTimeout]);
 
   // ── Получить локальный поток ────────────────────────────
   const getLocalStream = useCallback(async (micId?: string, cameraId?: string) => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(t => t.stop());
+    }
+    const mic = micId ?? devices.selectedMic;
+    const cam = cameraId ?? devices.selectedCamera;
+    const audioConstraint = mic && mic !== "default" ? { deviceId: { exact: mic } } : true;
+    const videoConstraint = withVideo
+      ? (cam && cam !== "default" ? { deviceId: { exact: cam } } : true)
+      : false;
     try {
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(t => t.stop());
-      }
-      const mic = micId ?? devices.selectedMic;
-      const cam = cameraId ?? devices.selectedCamera;
-      const audioConstraint = mic && mic !== "default" ? { deviceId: { exact: mic } } : true;
-      const videoConstraint = withVideo
-        ? (cam && cam !== "default" ? { deviceId: { exact: cam } } : true)
-        : false;
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: audioConstraint,
         video: videoConstraint,
@@ -98,8 +147,21 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
           payload: JSON.stringify(payload),
         }),
       });
-    } catch { /* silent */ }
+    } catch (err) {
+      console.error("sendSignal error:", err);
+    }
   }, [callId, userId, remoteUserId]);
+
+  const hangup = useCallback(() => {
+    if (callId && remoteUserId) {
+      sendSignal("hangup", {}).catch((err) => console.error("hangup signal error:", err));
+    }
+    cleanup();
+  }, [callId, remoteUserId, sendSignal, cleanup]);
+
+  const handleRemoteHangup = useCallback(() => {
+    cleanup();
+  }, [cleanup]);
 
   // ── Создать PeerConnection ──────────────────────────────
   const createPC = useCallback((stream: MediaStream) => {
@@ -124,17 +186,34 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
     };
 
     pc.onconnectionstatechange = () => {
-      setConnected(pc.connectionState === "connected");
+      const state = pc.connectionState;
+      if (state === "connected") {
+        setConnected(true);
+        clearReconnectTimeout();
+        clearCallTimeout();
+      } else if (state === "failed" || state === "closed") {
+        clearReconnectTimeout();
+        cleanup();
+      } else if (state === "disconnected") {
+        setConnected(false);
+        clearReconnectTimeout();
+        reconnectTimeoutRef.current = setTimeout(() => {
+          if (pcRef.current && pcRef.current.connectionState !== "connected") {
+            cleanup();
+          }
+        }, RECONNECT_TIMEOUT_MS);
+      }
     };
 
     pc.oniceconnectionstatechange = () => {
       if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
         setConnected(true);
+        clearCallTimeout();
       }
     };
 
     return pc;
-  }, [sendSignal, devices]);
+  }, [sendSignal, devices, clearReconnectTimeout, clearCallTimeout, cleanup]);
 
   // ── Polling сигналов ────────────────────────────────────
   const pollSignals = useCallback(async () => {
@@ -161,17 +240,20 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
         } else if (sig.type === "ice") {
           try { await pc.addIceCandidate(new RTCIceCandidate(payload.candidate)); } catch { /* stale */ }
         } else if (sig.type === "hangup") {
-          hangup();
+          handleRemoteHangup();
         }
       }
-    } catch { /* silent */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [callId, userId, sendSignal]);
+    } catch (err) {
+      console.error("pollSignals error:", err);
+    }
+   
+  }, [callId, userId, sendSignal, handleRemoteHangup]);
 
   // ── Инициализация звонка ────────────────────────────────
   useEffect(() => {
     if (!callId || !remoteUserId) return;
     let cancelled = false;
+    cleanupCalledRef.current = false;
 
     const init = async () => {
       await devices.refreshDevices();
@@ -188,6 +270,13 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
         } catch (err) {
           console.error("offer error:", err);
         }
+
+        callTimeoutRef.current = setTimeout(() => {
+          if (pcRef.current && pcRef.current.connectionState !== "connected") {
+            console.error("Outgoing call timeout — no answer");
+            hangup();
+          }
+        }, CALL_TIMEOUT_MS);
       }
 
       if (pollRef.current) clearInterval(pollRef.current);
@@ -199,6 +288,8 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
     return () => {
       cancelled = true;
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      clearCallTimeout();
+      clearReconnectTimeout();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [callId, remoteUserId]);
@@ -226,7 +317,6 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
       const newStream = await navigator.mediaDevices.getUserMedia({ audio: constraint, video: false });
       const newAudioTrack = newStream.getAudioTracks()[0];
       newAudioTrack.enabled = !micMutedRef.current;
-      // Заменяем в PC до остановки старого — без паузы
       if (pc) {
         const sender = pc.getSenders().find(s => s.track?.kind === "audio");
         if (sender) await sender.replaceTrack(newAudioTrack);
@@ -266,27 +356,11 @@ export function useWebRTC(options: UseWebRTCOptions): WebRTCState {
     }
   }, [devices]);
 
-  // ── Завершить звонок ────────────────────────────────────
-  const hangup = useCallback(() => {
-    if (callId && remoteUserId) sendSignal("hangup", {}).catch(() => {});
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    pcRef.current?.close();
-    pcRef.current = null;
-    localStreamRef.current?.getTracks().forEach(t => t.stop());
-    localStreamRef.current = null;
-    setLocalStream(null);
-    setRemoteStream(null);
-    setConnected(false);
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.srcObject = null;
-      remoteAudioRef.current = null;
-    }
-  }, [callId, remoteUserId, sendSignal]);
-
-  // Cleanup при unmount
   useEffect(() => {
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      if (reconnectTimeoutRef.current) { clearTimeout(reconnectTimeoutRef.current); reconnectTimeoutRef.current = null; }
+      if (callTimeoutRef.current) { clearTimeout(callTimeoutRef.current); callTimeoutRef.current = null; }
       pcRef.current?.close();
       localStreamRef.current?.getTracks().forEach(t => t.stop());
       remoteAudioRef.current?.pause();
